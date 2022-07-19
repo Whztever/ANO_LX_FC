@@ -91,7 +91,7 @@ class QRScanner_Yolo(object):
         self.net = cv2.dnn.readNet(cfg_path, weights_path)
         self.drawOutput = drawOutput
 
-    def __post_process(self, frame, outs):
+    def post_process(self, frame, outs):
         """
         后处理, 对输出进行筛选
         """
@@ -176,11 +176,11 @@ class FastestDet:
         self.nmsThreshold = nmsThreshold
         self.drawOutput = drawOutput
 
-    def __postprocess(self, frame, outs):
+    def post_process(self, frame, outs):
         """
         后处理, 对输出进行筛选
         """
-        outs = outs.transpose(1, 2, 0)
+        outs = outs.transpose(1, 2, 0)  # 将维度调整为 (H, W, C)
         frameHeight = frame.shape[0]
         frameWidth = frame.shape[1]
         feature_height = outs.shape[0]
@@ -236,4 +236,49 @@ class FastestDet:
         blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (self.inpWidth, self.inpHeight))
         self.net.setInput(blob)
         pred = self.net.forward(self.net.getUnconnectedOutLayersNames())[0][0]
-        return self.__postprocess(frame, pred)
+        return self.post_process(frame, pred)
+
+
+class FastestDetOnnx(FastestDet):
+    """
+    使用 onnxruntime 运行 FastestDet 目标检测网络
+    """
+
+    def __init__(self, confThreshold=0.6, nmsThreshold=0.3, drawOutput=False):
+        """
+        FastestDet 目标检测网络
+        confThreshold: 置信度阈值
+        nmsThreshold: 非极大值抑制阈值
+        """
+        import onnxruntime
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        path_names = os.path.join(path, "FastestDet.names")  # 识别类别
+        path_onnx = os.path.join(path, "FastestDet.onnx")
+        self.classes = list(map(lambda x: x.strip(), open(path_names, "r").readlines()))
+        self.inpWidth = 500
+        self.inpHeight = 500
+        self.session = onnxruntime.InferenceSession(path_onnx)
+        self.confThreshold = confThreshold
+        self.nmsThreshold = nmsThreshold
+        self.drawOutput = drawOutput
+
+    def pre_process(self, src_img, size):
+        """
+        前处理, 对输入图像进行归一化
+        """
+        output = cv2.resize(src_img, (size[0], size[1]), interpolation=cv2.INTER_AREA)
+        output = output.transpose(2, 0, 1)
+        output = output.reshape((1, 3, size[1], size[0])) / 255
+
+        return output.astype("float32")
+
+    def detect(self, frame):
+        """
+        执行识别
+        return: 识别结果列表: (中点坐标, 类型名称, 置信度)
+        """
+        data = self.pre_process(frame, (self.inpWidth, self.inpHeight))
+        input_name = self.session.get_inputs()[0].name
+        feature_map = self.session.run([], {input_name: data})[0][0]
+        return self.post_process(frame, feature_map)
