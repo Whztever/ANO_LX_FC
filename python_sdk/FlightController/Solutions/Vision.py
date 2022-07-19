@@ -1,3 +1,4 @@
+import time
 from typing import List, Optional, Tuple, Union
 
 import cv2
@@ -778,7 +779,7 @@ def rotate_img(image, angle, fill_color=(0, 0, 0)):
     return cv2.warpAffine(image, M, (nW, nH), borderValue=fill_color)
 
 
-def set_cam_autowb(cam, enable=True,manual_temp=5500):
+def set_cam_autowb(cam, enable=True, manual_temp=5500):
     """
     设置摄像头自动白平衡
     enable: 是否启用自动白平衡
@@ -787,3 +788,25 @@ def set_cam_autowb(cam, enable=True,manual_temp=5500):
     cam.set(cv2.CAP_PROP_AUTO_WB, int(enable))
     if not enable:
         cam.set(cv2.CAP_PROP_WB_TEMPERATURE, manual_temp)
+
+
+class fps_counter:
+    def __init__(self, max_sample=60) -> None:
+        self.t = time.time()
+        self.max_sample = max_sample
+        self.t_list = []
+
+    def update(self) -> None:
+        self.t_list.append(time.time() - self.t)
+        self.t = time.time()
+        if len(self.t_list) > self.max_sample:
+            self.t_list.pop(0)
+
+    @property
+    def fps(self) -> float:
+        length = len(self.t_list)
+        sum_t = sum(self.t_list)
+        if length == 0:
+            return 0.0
+        else:
+            return length / sum_t
