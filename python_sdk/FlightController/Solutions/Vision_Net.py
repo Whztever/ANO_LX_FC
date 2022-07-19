@@ -263,22 +263,12 @@ class FastestDetOnnx(FastestDet):
         self.nmsThreshold = nmsThreshold
         self.drawOutput = drawOutput
 
-    def pre_process(self, src_img, size):
-        """
-        前处理, 对输入图像进行归一化
-        """
-        output = cv2.resize(src_img, (size[0], size[1]), interpolation=cv2.INTER_AREA)
-        output = output.transpose(2, 0, 1)
-        output = output.reshape((1, 3, size[1], size[0])) / 255
-
-        return output.astype("float32")
-
     def detect(self, frame):
         """
         执行识别
         return: 识别结果列表: (中点坐标, 类型名称, 置信度)
         """
-        data = self.pre_process(frame, (self.inpWidth, self.inpHeight))
+        blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (self.inpWidth, self.inpHeight))
         input_name = self.session.get_inputs()[0].name
-        feature_map = self.session.run([], {input_name: data})[0][0]
+        feature_map = self.session.run([], {input_name: blob})[0][0]
         return self.post_process(frame, feature_map)
