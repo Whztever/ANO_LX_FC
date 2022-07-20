@@ -26,12 +26,9 @@ b_point = lambda x, y: CORNER_POINT + X_BOX * x + Y_BOX * y + B_OFFSET
 # 进入点
 start_point = m_point(4, 6)
 # 任务点
-waypoints = np.array(
-    [
-    ]
-)
+waypoints = np.array([])
 # 基地点
-base_point = b_point(0, 7) 
+base_point = b_point(0, 7)
 # 降落点
 landing_point = base_point
 
@@ -78,10 +75,14 @@ class Mission(object):
         # vision_debug()
 
     def run(self):
+        fc = self.fc
+        radar = self.radar
+        cam = self.cam
         ############### 参数 #################
         camera_down_pwm = 32.5
         camera_up_pwm = 72
         navigation_speed = 40
+        set_buzzer = lambda x: fc.set_digital_output(0, x)
         ################ 启动线程 ################
         self.running = True
         self.thread_list.append(
@@ -94,9 +95,6 @@ class Mission(object):
         self.thread_list[-1].start()
         logger.info("[MISSION] Threads started")
         ################ 初始化 ################
-        fc = self.fc
-        radar = self.radar
-        cam = self.cam
         change_cam_resolution(cam, 800, 600)
         set_cam_autowb(cam, False)  # 关闭自动白平衡
         for _ in range(10):
@@ -106,6 +104,13 @@ class Mission(object):
         self.set_navigation_speed(navigation_speed)
         ################ 初始化完成 ################
         logger.info("[MISSION] Mission-1 Started")
+        fc.set_rgb_led(255, 0, 0) # 起飞前警告
+        for i in range(10):
+            sleep(0.1)
+            set_buzzer(True)
+            sleep(0.1)
+            set_buzzer(False)
+        fc.set_rgb_led(0, 0, 0) 
         fc.unlock()
         sleep(2)  # 等待电机启动
         fc.take_off(80)
