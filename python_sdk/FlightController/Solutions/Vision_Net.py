@@ -159,7 +159,7 @@ class QRScanner_Yolo(object):
 
 
 class FastestDet:
-    def __init__(self, confThreshold=0.6, nmsThreshold=0.4, drawOutput=False):
+    def __init__(self, confThreshold=0.5, nmsThreshold=0.4, drawOutput=False):
         """
         FastestDet 目标检测网络
         confThreshold: 置信度阈值
@@ -169,8 +169,8 @@ class FastestDet:
         path_names = os.path.join(path, "FastestDet.names")  # 识别类别
         path_onnx = os.path.join(path, "FastestDet.onnx")
         self.classes = list(map(lambda x: x.strip(), open(path_names, "r").readlines()))
-        self.inpWidth = 500
-        self.inpHeight = 500
+        self.inpWidth = 352
+        self.inpHeight = 352
         self.net = cv2.dnn.readNet(path_onnx)
         self.confThreshold = confThreshold
         self.nmsThreshold = nmsThreshold
@@ -256,8 +256,8 @@ class FastestDetOnnx(FastestDet):
         path_names = os.path.join(path, "FastestDet.names")  # 识别类别
         path_onnx = os.path.join(path, "FastestDet.onnx")
         self.classes = list(map(lambda x: x.strip(), open(path_names, "r").readlines()))
-        self.inpWidth = 500
-        self.inpHeight = 500
+        self.inpWidth = 352
+        self.inpHeight = 352
         self.session = onnxruntime.InferenceSession(path_onnx)
         self.confThreshold = confThreshold
         self.nmsThreshold = nmsThreshold
