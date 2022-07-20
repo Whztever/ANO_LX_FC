@@ -1,5 +1,18 @@
+import os
+import sys
+
+####### 清理日志 #######
+path = os.path.dirname(os.path.abspath(__file__))
+log_path = os.path.join(path, "fc_log.log")
+if os.path.exists(log_path):
+    try:
+        os.remove(log_path)
+    except:
+        pass
+####################
 from time import sleep, time
 
+import cv2
 from FlightController import FC_Client, FC_Controller, logger
 from FlightController.Components import LD_Radar, Map_360, Point_2D
 
@@ -14,6 +27,11 @@ while True:
 fc.start_sync_state(False)
 radar = LD_Radar()
 radar.start("/dev/ttyUSB0", "LD06")
+cam = cv2.VideoCapture(0)
+while not cam.isOpened():
+    cam.open(0)
+    if not cam.isOpened():
+        raise Exception("Camera open failed")
 
 ############################## 参数 ##############################
 camera_down_pwm = 32.5
@@ -25,7 +43,7 @@ set_buzzer = lambda x: fc.set_digital_output(0, x)
 ############################## 初始化 ##############################
 
 fc.wait_for_connection()
-fc.settings.action_log_output = False
+fc.set_action_log(False)
 
 fc.set_PWM_output(0, camera_up_pwm)
 
@@ -67,21 +85,21 @@ for i in range(10):
 fc.set_rgb_led(0, 0, 0)
 
 ############################## 开始任务 ##############################
-fc.settings.action_log_output = True
+fc.set_action_log(True)
 mission = None
 try:
     if target_mission == 1:
         from mission1 import Mission
 
-        mission = Mission(fc, radar)
+        mission = Mission(fc, radar, cam)
     elif target_mission == 2:
         from mission2 import Mission
 
-        mission = Mission(fc, radar)
+        mission = Mission(fc, radar, cam)
     elif target_mission == 3:
         from mission3 import Mission
 
-        mission = Mission(fc, radar)
+        mission = Mission(fc, radar, cam)
     logger.info("[MISSION] Calling Mission")
 
     mission.run()
@@ -104,7 +122,7 @@ finally:
             fc.lock()
 
 ############################## 结束任务 ##############################
-
+fc.set_action_log(False)
 fc.set_PWM_output(1, 0)
 fc.set_rgb_led(0, 255, 0)
 set_buzzer(True)
@@ -112,11 +130,10 @@ sleep(0.5)
 set_buzzer(False)
 fc.set_rgb_led(0, 0, 0)
 fc.quit()
+cam.release()
 
 ########################## 重启自身 #############################
-import os
-import sys
 
-sleep(1)
-logger.info("[MISSION] Manager Restarting")
-os.execl(sys.executable, sys.executable, *sys.argv)
+# sleep(1)
+# logger.info("[MISSION] Manager Restarting")
+# os.execl(sys.executable, sys.executable, *sys.argv)
