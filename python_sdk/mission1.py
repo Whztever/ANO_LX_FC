@@ -1,11 +1,18 @@
 import threading
+from re import S
 from time import sleep, time
 
+import cv2
 import numpy as np
 from FlightController import FC_Client, FC_Controller, logger
 from FlightController.Components import LD_Radar, Map_360, Point_2D
-from FlightController.Solutions.Vision import *
-from FlightController.Solutions.Vision_Net import *
+from FlightController.Solutions.Vision import (
+    change_cam_resolution,
+    find_QRcode_zbar,
+    set_cam_autowb,
+    vision_debug,
+)
+from FlightController.Solutions.Vision_Net import FastestDetOnnx
 from simple_pid import PID
 
 
@@ -15,23 +22,10 @@ def deg_360_180(deg):
     return deg
 
 
-M_OFFSET = np.array([18, 18])
-B_OFFSET = np.array([22, 25])
-CORNER_POINT = np.array([53, 51])
-Y_BOX = np.array([0, 50])
-X_BOX = np.array([50, 0])
-
-m_point = lambda x, y: CORNER_POINT + X_BOX * x + Y_BOX * y + M_OFFSET
-b_point = lambda x, y: CORNER_POINT + X_BOX * x + Y_BOX * y + B_OFFSET
-# 进入点
-start_point = m_point(4, 6)
-# 任务点
-waypoints = np.array([])
 # 基地点
-base_point = b_point(0, 7)
+BASE_POINT = np.array([79, 425])
 # 降落点
-landing_point = base_point
-
+landing_point = BASE_POINT
 
 class Mission(object):
     def __init__(self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture):
@@ -39,30 +33,31 @@ class Mission(object):
         self.radar = radar
         self.cam = camera
         self.inital_yaw = self.fc.state.yaw.value
+        self.fd = FastestDetOnnx(drawOutput=True)  # 初始化神经网络
         ############### PID #################
         self.height_pid = PID(
-            0.8, 0.0, 0.1, setpoint=135, output_limits=(-15, 15), auto_mode=False
+            0.8, 0.0, 0.1, setpoint=0, output_limits=(-30, 30), auto_mode=False
         )
         self.navi_x_pid = PID(
-            0.5,
+            0.4,
             0,
-            0.02,
-            setpoint=start_point[0],
+            0.08,
+            setpoint=0,
             output_limits=(-0.01, 0.01),
             auto_mode=False,
         )
         self.navi_y_pid = PID(
-            0.5,
+            0.4,
             0,
-            0.02,
-            setpoint=start_point[1],
+            0.08,
+            setpoint=0,
             output_limits=(-0.01, 0.01),
             auto_mode=False,
         )
         self.navi_yaw_pid = PID(
-            1.0,
+            0.3,
             0.0,
-            0.05,
+            0.2,
             setpoint=0,
             output_limits=(-45, 45),
             auto_mode=False,
@@ -74,15 +69,24 @@ class Mission(object):
         self.thread_list = []
         # vision_debug()
 
+    def stop(self):
+        self.running = False
+        self.fc.stop_realtime_control()
+
     def run(self):
         fc = self.fc
         radar = self.radar
         cam = self.cam
         ############### 参数 #################
-        camera_down_pwm = 32.5
-        camera_up_pwm = 72
-        navigation_speed = 40
-        set_buzzer = lambda x: fc.set_digital_output(0, x)
+        self.camera_down_pwm = 32.5
+        self.camera_up_pwm = 72
+        self.navigation_speed = 25  # 导航速度
+        self.cruise_height = 125  # 巡航高度
+        self.set_buzzer = lambda x: fc.set_digital_output(0, x)
+        self.pid_tunings = {
+            "default": (0.4, 0, 0.08),  # 导航
+            "landing": (0.25, 0.02, 0.06),  # 降落
+        }  # PID参数 (仅导航XY使用)
         ################ 启动线程 ################
         self.running = True
         self.thread_list.append(
@@ -95,62 +99,81 @@ class Mission(object):
         self.thread_list[-1].start()
         logger.info("[MISSION] Threads started")
         ################ 初始化 ################
+        fc.set_action_log(False)
         change_cam_resolution(cam, 800, 600)
         set_cam_autowb(cam, False)  # 关闭自动白平衡
         for _ in range(10):
             cam.read()
-        fc.set_PWM_output(0, camera_up_pwm)
+        fc.set_PWM_output(0, self.camera_up_pwm)
         fc.set_flight_mode(fc.PROGRAM_MODE)
-        self.set_navigation_speed(navigation_speed)
-        ################ 初始化完成 ################
-        logger.info("[MISSION] Mission-1 Started")
-        fc.set_rgb_led(255, 0, 0) # 起飞前警告
+        self.set_navigation_speed(self.navigation_speed)
+        fc.set_rgb_led(255, 0, 0)  # 起飞前警告
         for i in range(10):
             sleep(0.1)
-            set_buzzer(True)
+            self.set_buzzer(True)
             sleep(0.1)
-            set_buzzer(False)
-        fc.set_rgb_led(0, 0, 0) 
-        fc.unlock()
+            self.set_buzzer(False)
+        fc.set_rgb_led(0, 0, 0)
+        fc.set_action_log(True)
+        self.fc.start_realtime_control(20)
+        self.switch_pid("default")
+        ################ 初始化完成 ################
+        logger.info("[MISSION] Mission-1 Started")
+        self.pointing_takeoff(BASE_POINT)
+        ######## 回到基地点
+        logger.info("[MISSION] Go to base")
+        self.navigation_to_waypoint(BASE_POINT)
+        self.wait_for_waypoint()
+        self.pointing_landing(landing_point)
+        logger.info("[MISSION] Misson-1 Finished")
+
+    def pointing_takeoff(self, point):
+        """
+        定点起飞
+        """
+        logger.info(f"[MISSION] Takeoff at {point}")
+        self.fc.set_flight_mode(self.fc.PROGRAM_MODE)
+        self.fc.unlock()
         sleep(2)  # 等待电机启动
-        fc.take_off(80)
-        fc.wait_for_takeoff_done()
+        self.fc.take_off(80)
+        self.fc.wait_for_takeoff_done()
         ######## 闭环定高
-        fc.set_flight_mode(fc.HOLD_POS_MODE)
+        self.fc.set_flight_mode(self.fc.HOLD_POS_MODE)
+        self.height_pid.setpoint = self.cruise_height
         self.keep_height_flag = True
-        fc.start_realtime_control(10)
         sleep(2)
-        self.navigation_to_waypoint(base_point)  # 初始化路径点
+        self.navigation_to_waypoint(point)  # 初始化路径点
+        self.switch_pid("default")
         sleep(0.1)
         self.navigation_flag = True
-        fc.set_PWM_output(0, camera_down_pwm)
-        ######## 飞进入点
-        logger.info("[MISSION] Navigation to Start point")
-        self.navigation_to_waypoint(start_point)
+
+    def pointing_landing(self, point):
+        """
+        定点降落
+        """
+        logger.info(f"[MISSION] Landing at {point}")
+        self.navigation_to_waypoint(point)
         self.wait_for_waypoint()
-        self.sow()
-        ######## 遍历路径
-        for n, waypoint in enumerate(waypoints):
-            logger.info(f"[MISSION] Navigation to Waypoint-{n:02d}: {waypoint}")
-            self.navigation_to_waypoint(waypoint)
-            self.wait_for_waypoint()
-            self.sow()
-        ######## 精准着陆
-        logger.info("[MISSION] Landing")
+        self.switch_pid("landing")
+        sleep(1)
         self.height_pid.setpoint = 60
-        self.navigation_to_waypoint(landing_point)
+        sleep(1.5)
         self.wait_for_waypoint()
         self.height_pid.setpoint = 20
         sleep(2)
         self.wait_for_waypoint()
         self.height_pid.setpoint = 0
-        fc.wait_for_lock(4)
-        fc.lock()
-        logger.info("[MISSION] Mission-1 Finished")
+        self.fc.wait_for_lock(6)
+        self.fc.lock()
 
-    def stop(self):
-        self.running = False
-        self.fc.stop_realtime_control()
+    def switch_pid(self, pid):
+        """
+        切换PID参数
+        """
+        tuning = self.pid_tunings.get(pid, self.pid_tunings["default"])
+        self.navi_x_pid.tunings = tuning
+        self.navi_y_pid.tunings = tuning
+        logger.info(f"[MISSION] PID Tunings set to {pid}: {tuning}")
 
     def keep_height_task(self):
         paused = False
@@ -170,14 +193,14 @@ class Mission(object):
                 if not paused:
                     paused = True
                     self.height_pid.set_auto_mode(False)
-                    self.fc.update_realtime_control(vel_z=0, yaw=0)
+                    self.fc.update_realtime_control(vel_z=0)
                     logger.info("[MISSION] Keep height paused")
 
     def navigation_task(self):
         ######## 解算参数 ########
         SIZE = 1000
         SCALE_RATIO = 0.5
-        LOW_PASS_RATIO = 0.5
+        LOW_PASS_RATIO = 0.6
         ########################
         paused = False
         while self.running:
@@ -221,9 +244,10 @@ class Mission(object):
                     out_yaw = int(self.navi_yaw_pid(current_yaw))
                     if out_yaw is not None:
                         self.fc.update_realtime_control(yaw=out_yaw)
-                    logger.debug(
-                        f"[MISSION] Current pose: {current_x}, {current_y}, {current_yaw}; Output: {out_x}, {out_y}, {out_yaw}"
-                    )
+                    if False:  # debug
+                        logger.debug(
+                            f"[MISSION] Current pose: {current_x}, {current_y}, {current_yaw}; Output: {out_x}, {out_y}, {out_yaw}"
+                        )
             else:
                 self.radar.stop_resolve_pose()
                 if not paused:
@@ -231,7 +255,7 @@ class Mission(object):
                     self.navi_x_pid.set_auto_mode(False)
                     self.navi_y_pid.set_auto_mode(False)
                     self.navi_yaw_pid.set_auto_mode(False)
-                    self.fc.update_realtime_control(vel_x=0, vel_y=0)
+                    self.fc.update_realtime_control(vel_x=0, vel_y=0, yaw=0)
                     logger.info("[MISSION] Navigation paused")
 
     def navigation_to_waypoint(self, waypoint):
@@ -243,25 +267,89 @@ class Mission(object):
         self.navi_x_pid.output_limits = (-speed, speed)
         self.navi_y_pid.output_limits = (-speed, speed)
 
-    def reached_waypoint(self):
-        THRESHOLD = 15
+    def reached_waypoint(self, pos_thres=15):
         return (
-            abs(self.radar.rt_pose[0] - self.navi_x_pid.setpoint) < THRESHOLD
-            and abs(self.radar.rt_pose[1] - self.navi_y_pid.setpoint) < THRESHOLD
+            abs(self.radar.rt_pose[0] - self.navi_x_pid.setpoint) < pos_thres
+            and abs(self.radar.rt_pose[1] - self.navi_y_pid.setpoint) < pos_thres
         )
 
-    def wait_for_waypoint(self):
-        TIME_THRESHOLD = 1
-        OVERTIME_THRESHOLD = 30
+    def wait_for_waypoint(self, time_thres=1, pos_thres=15, timeout=30):
         time_count = 0
         time_start = time()
         while True:
             sleep(0.1)
-            if self.reached_waypoint():
+            if self.reached_waypoint(pos_thres):
                 time_count += 0.1
-            if time_count >= TIME_THRESHOLD:
+            if time_count >= time_thres:
                 logger.info("[MISSION] Reached waypoint")
                 return
-            if time() - time_start > OVERTIME_THRESHOLD:
+            if time() - time_start > timeout:
                 logger.warning("[MISSION] Waypoint overtime")
                 return
+
+    def wait_for_waypoint_with_avoidance(self, time_thres=1, pos_thres=15, timeout=60):
+        time_count = 0
+        time_start = time()
+        while True:
+            sleep(0.1)
+            if self.reached_waypoint(pos_thres):
+                time_count += 0.1
+            if time_count >= time_thres:
+                logger.info("[MISSION] Reached waypoint")
+                return
+            if time() - time_start > timeout:
+                logger.warning("[MISSION] Waypoint overtime")
+                return
+            self.avoidance_handler()
+
+    def avoidance_handler(self):
+        points = self.radar.map.find_nearest(
+            self._avd_fp_from, self._avd_fp_to, 1, self._avd_fp_dist
+        )
+        if len(points) > 0:
+            logger.info("[MISSION] Found obstacle")
+            waypoint = np.array([self.navi_x_pid.setpoint, self.navi_y_pid.setpoint])
+            pos_point = np.array([self.radar.rt_pose[0], self.radar.rt_pose[1]])
+            self.navigation_to_waypoint(pos_point)  # 原地停下
+            self.height_pid.setpoint = self._avd_height
+            self.set_buzzer(True)
+            self.fc.set_rgb_led(255, 0, 0)
+            sleep(1)
+            self.set_buzzer(False)
+            self.fc.set_rgb_led(0, 0, 0)
+            sleep(1)  # 等待高度稳定
+            self.keep_height_flag = False
+            self.navigation_flag = False
+            self.fc.set_flight_mode(self.fc.PROGRAM_MODE)
+            self.fc.horizontal_move(self._avd_move, 25, self._avd_deg)
+            self.fc.set_rgb_led(255, 255, 0)
+            self.fc.wait_for_last_command_done()
+            self.fc.set_rgb_led(0, 0, 0)
+            self.fc.set_flight_mode(self.fc.HOLD_POS_MODE)
+            self.keep_height_flag = True
+            self.height_pid.setpoint = self.cruise_height
+            sleep(1)  # 等待高度稳定
+            self.navigation_flag = True
+            self.navigation_to_waypoint(waypoint)
+
+    def set_avoidance_args(
+        self,
+        deg: int = 0,
+        deg_range: int = 30,
+        dist: int = 600,
+        avd_height: int = 200,
+        avd_move: int = 180,
+    ):
+        """
+        fp_deg: 目标避障角度(deg) (0~360)
+        fp_deg_range: 目标避障角度范围(deg)
+        fp_dist: 目标避障距离(mm)
+        avd_height: 避障目标高度(cm)
+        avd_move: 避障移动距离(cm)
+        """
+        self._avd_fp_from = deg - deg_range
+        self._avd_fp_to = deg + deg_range
+        self._avd_fp_dist = dist
+        self._avd_height = avd_height
+        self._avd_deg = deg
+        self._avd_move = avd_move
