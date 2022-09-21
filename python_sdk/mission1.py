@@ -1,18 +1,19 @@
 import threading
-from re import S
 from time import sleep, time
 
 import cv2
 import numpy as np
+from configManager import ConfigManager
 from FlightController import FC_Client, FC_Controller, logger
 from FlightController.Components import LD_Radar, Map_360, Point_2D
 from FlightController.Solutions.Vision import (
     change_cam_resolution,
-    find_QRcode_zbar,
     set_cam_autowb,
     vision_debug,
 )
 from FlightController.Solutions.Vision_Net import FastestDetOnnx
+from hmi import HMI
+from just_playback import Playback
 from simple_pid import PID
 
 
@@ -22,18 +23,49 @@ def deg_360_180(deg):
     return deg
 
 
+cfg = ConfigManager()
+
 # 基地点
-BASE_POINT = np.array([79, 425])
+BASE_POINT = cfg.get_array("point-0")
+logger.info(f"[MISSION] Loaded base point: {BASE_POINT}")
 # 降落点
 landing_point = BASE_POINT
+# 任务坐标
+NULL_PT = np.array([np.NaN, np.NaN])
+POINT = lambda x: cfg.get_array(f"point-{x}")
+POINTS_ARR = np.array(
+    [
+        [POINT(1), NULL_PT, POINT(11), NULL_PT, POINT(5)],
+        [NULL_PT, POINT(8), NULL_PT, POINT(3), NULL_PT],
+        [POINT(9), NULL_PT, POINT(2), NULL_PT, POINT(12)],
+        [NULL_PT, POINT(7), NULL_PT, POINT(6), NULL_PT],
+        [NULL_PT, NULL_PT, POINT(10), NULL_PT, POINT(4)],
+    ]
+)
+logger.info(f"[MISSION] Loaded points: {POINTS_ARR}")
+# 任务点
+RED_TRIANGLES = [(0, 0), (2, 2)]
+RED_RECTANGLES = [(0, 2), (2, 4)]
+RED_CIRCLES = [(4, 0), (3, 3)]
+BLUE_TRIANGLES = [(3, 1), (4, 4)]
+BLUE_RECTANGLES = [(2, 0), (4, 2)]
+BLUE_CIRCLES = [(1, 1), (1, 3)]
+target_points = [cfg.get_array("target-1"), cfg.get_array("target-2")]
+logger.info(f"[MISSION] Loaded target points: {target_points}")
+
 
 class Mission(object):
-    def __init__(self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture):
+    def __init__(
+        self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture, hmi: HMI
+    ):
         self.fc = fc
         self.radar = radar
         self.cam = camera
+        self.hmi = hmi
         self.inital_yaw = self.fc.state.yaw.value
         self.fd = FastestDetOnnx(drawOutput=True)  # 初始化神经网络
+        self.playback = Playback()
+        self.playback.load_file("/home/pi/Desktop/prj/python_sdk/door.mp3")
         ############### PID #################
         self.height_pid = PID(
             0.8, 0.0, 0.1, setpoint=0, output_limits=(-30, 30), auto_mode=False
@@ -55,9 +87,9 @@ class Mission(object):
             auto_mode=False,
         )
         self.navi_yaw_pid = PID(
-            0.3,
-            0.0,
             0.2,
+            0.0,
+            0.0,
             setpoint=0,
             output_limits=(-45, 45),
             auto_mode=False,
@@ -80,12 +112,14 @@ class Mission(object):
         ############### 参数 #################
         self.camera_down_pwm = 32.5
         self.camera_up_pwm = 72
-        self.navigation_speed = 25  # 导航速度
-        self.cruise_height = 125  # 巡航高度
-        self.set_buzzer = lambda x: fc.set_digital_output(0, x)
+        self.navigation_speed = 35  # 导航速度
+        self.precision_speed = 25  # 精确速度
+        self.cruise_height = 140  # 巡航高度
+        self.goods_height = 80  # 处理物品高度
         self.pid_tunings = {
-            "default": (0.4, 0, 0.08),  # 导航
-            "landing": (0.25, 0.02, 0.06),  # 降落
+            "default": (0.35, 0, 0.08),  # 导航
+            "delivery": (0.4, 0.05, 0.16),  # 配送
+            "landing": (0.4, 0.05, 0.16),  # 降落
         }  # PID参数 (仅导航XY使用)
         ################ 启动线程 ################
         self.running = True
@@ -105,21 +139,32 @@ class Mission(object):
         for _ in range(10):
             cam.read()
         fc.set_PWM_output(0, self.camera_up_pwm)
+        # self.recognize_targets()
         fc.set_flight_mode(fc.PROGRAM_MODE)
         self.set_navigation_speed(self.navigation_speed)
-        fc.set_rgb_led(255, 0, 0)  # 起飞前警告
-        for i in range(10):
-            sleep(0.1)
-            self.set_buzzer(True)
-            sleep(0.1)
-            self.set_buzzer(False)
-        fc.set_rgb_led(0, 0, 0)
+        # self.playback.loop_at_end(True)
+        # self.playback.play()
+        for i in range(6):
+            sleep(0.25)
+            fc.set_rgb_led(255, 0, 0)  # 起飞前警告
+            sleep(0.25)
+            fc.set_rgb_led(0, 0, 0)
+        # self.playback.stop()
+        fc.set_PWM_output(0, self.camera_down_pwm)
+        fc.set_digital_output(2, True)  # 激光笔开启
         fc.set_action_log(True)
         self.fc.start_realtime_control(20)
         self.switch_pid("default")
         ################ 初始化完成 ################
         logger.info("[MISSION] Mission-1 Started")
         self.pointing_takeoff(BASE_POINT)
+        ################ 开始任务 ################
+        for target_point in target_points:
+            x, y = target_point
+            target_point_pos = POINTS_ARR[y, x]
+            self.navigation_to_waypoint(target_point_pos)
+            self.wait_for_waypoint()
+            self.handle_goods()
         ######## 回到基地点
         logger.info("[MISSION] Go to base")
         self.navigation_to_waypoint(BASE_POINT)
@@ -132,11 +177,15 @@ class Mission(object):
         定点起飞
         """
         logger.info(f"[MISSION] Takeoff at {point}")
+        self.navigation_flag = False
         self.fc.set_flight_mode(self.fc.PROGRAM_MODE)
         self.fc.unlock()
+        inital_yaw = self.fc.state.yaw.value
         sleep(2)  # 等待电机启动
         self.fc.take_off(80)
         self.fc.wait_for_takeoff_done()
+        self.fc.set_yaw(inital_yaw, 25)
+        self.fc.wait_for_hovering(2)
         ######## 闭环定高
         self.fc.set_flight_mode(self.fc.HOLD_POS_MODE)
         self.height_pid.setpoint = self.cruise_height
@@ -146,6 +195,7 @@ class Mission(object):
         self.switch_pid("default")
         sleep(0.1)
         self.navigation_flag = True
+        self.set_navigation_speed(self.navigation_speed)
 
     def pointing_landing(self, point):
         """
@@ -154,17 +204,51 @@ class Mission(object):
         logger.info(f"[MISSION] Landing at {point}")
         self.navigation_to_waypoint(point)
         self.wait_for_waypoint()
+        self.set_navigation_speed(self.precision_speed)
         self.switch_pid("landing")
         sleep(1)
         self.height_pid.setpoint = 60
         sleep(1.5)
-        self.wait_for_waypoint()
+        self.height_pid.setpoint = 30
+        sleep(1.5)
         self.height_pid.setpoint = 20
         sleep(2)
         self.wait_for_waypoint()
         self.height_pid.setpoint = 0
-        self.fc.wait_for_lock(6)
+        # self.fc.land()
+        self.fc.wait_for_lock(5)
         self.fc.lock()
+
+    def handle_goods(self):
+        """
+        处理物品
+        """
+        logger.info(f"[MISSION] Handle goods")
+        self.height_pid.setpoint = self.goods_height
+        self.set_navigation_speed(self.precision_speed)
+        self.switch_pid("delivery")
+        sleep(4)  # 等待高度稳定
+        #####################################
+        self.fc.set_pod(1, 8500)
+        sleep(8.5)
+        ####################################
+        # self.playback.loop_at_end(True)
+        # self.playback.play()
+        self.fc.set_rgb_led(0, 255, 0)
+        self.fc.set_digital_output(0, True)
+        sleep(5)
+        self.fc.set_digital_output(0, False)
+        # self.playback.stop()
+        self.fc.set_rgb_led(0, 0, 0)
+        #####################################
+        self.fc.set_pod(2, 10000)
+        sleep(8.5)
+        ####################################
+        self.switch_pid("default")
+        self.height_pid.setpoint = self.cruise_height
+        sleep(4)  # 等待高度稳定
+        ####################################
+        self.set_navigation_speed(self.navigation_speed)
 
     def switch_pid(self, pid):
         """
@@ -312,10 +396,8 @@ class Mission(object):
             pos_point = np.array([self.radar.rt_pose[0], self.radar.rt_pose[1]])
             self.navigation_to_waypoint(pos_point)  # 原地停下
             self.height_pid.setpoint = self._avd_height
-            self.set_buzzer(True)
             self.fc.set_rgb_led(255, 0, 0)
             sleep(1)
-            self.set_buzzer(False)
             self.fc.set_rgb_led(0, 0, 0)
             sleep(1)  # 等待高度稳定
             self.keep_height_flag = False
@@ -338,7 +420,7 @@ class Mission(object):
         deg_range: int = 30,
         dist: int = 600,
         avd_height: int = 200,
-        avd_move: int = 180,
+        avd_move: int = 150,
     ):
         """
         fp_deg: 目标避障角度(deg) (0~360)
@@ -353,3 +435,48 @@ class Mission(object):
         self._avd_height = avd_height
         self._avd_deg = deg
         self._avd_move = avd_move
+
+    def recognize_targets(self):
+        global target_points
+        target_points = []
+        logger.info("[MISSION] Recognizing targets")
+        self.hmi.info("正在识别, 请保持目标在视野内\n尚未识别到目标")
+        self.fc.set_rgb_led(255, 255, 0)
+        rec_dict = {}
+        start = False
+        last_scan_time = time()
+        while True:
+            img = self.cam.read()[1]
+            if img is None:
+                continue
+            get = self.fd.detect(img)
+            for res in get:
+                name = res[1]
+                self.hmi.info(f"正在识别, 请保持目标在视野内\n识别到目标: {name}")
+                rec_dict[name] = rec_dict.get(name, 0) + 1
+                if not start:
+                    start = True
+                last_scan_time = time()
+            if start and time() - last_scan_time > 2:
+                break
+        max_idx = max(rec_dict, key=rec_dict.get)
+        logger.info(f"[MISSION] Recognized target: {max_idx}")
+        self.hmi.info(f"已设定目标: {max_idx}\n等待一键启动")
+        self.fc.set_rgb_led(0, 255, 0)
+        if max_idx == "r_rec":
+            target_points = RED_RECTANGLES
+        elif max_idx == "b_rec":
+            target_points = BLUE_RECTANGLES
+        elif max_idx == "r_tri":
+            target_points = RED_TRIANGLES
+        elif max_idx == "b_tri":
+            target_points = BLUE_TRIANGLES
+        elif max_idx == "r_cir":
+            target_points = RED_CIRCLES
+        elif max_idx == "b_cir":
+            target_points = BLUE_CIRCLES
+        else:
+            raise Exception(f"[MISSION] Unknown target: {max_idx}")
+        logger.info("[MISSION] Set target points: {}".format(target_points))
+        self.fc.event.key_short.wait_clear()
+        self.hmi.info("任务开始, 请远离飞行器")
