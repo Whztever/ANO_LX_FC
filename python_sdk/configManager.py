@@ -1,6 +1,7 @@
 import configparser
 import os
 import re
+from typing import Any, Optional
 
 import numpy as np
 
@@ -58,7 +59,7 @@ class ConfigManager:
         """
         return eval(self.get(option))
 
-    def get_array(self, option: str, dtype: str = None) -> np.ndarray:
+    def get_array(self, option: str, dtype: Optional[str] = None) -> np.ndarray:
         """
         Get the value of an option, return as numpy array
         dtype: str, optional, numpy format, default None
@@ -72,7 +73,7 @@ class ConfigManager:
         else:
             return np.array(eval(string), dtype)
 
-    def set(self, option: str, value: any):
+    def set(self, option: str, value: Any):
         """
         Set the value of an option
         """
@@ -92,7 +93,6 @@ class ConfigManager:
             self._config.write(f)
 
     def _init_file_(self, default_setting: dict):
-
         if self._section_name not in self._config.sections():
             self._config.add_section(self._section_name)
 

@@ -1,8 +1,9 @@
 import socket
 import sys
 import time
-from multiprocessing.managers import BaseManager, EventProxy, ListProxy
+from multiprocessing.managers import BaseManager, EventProxy, ListProxy  # type: ignore
 from threading import Event, Thread
+from typing import Optional
 
 from .Application import FC_Application
 from .Logger import logger
@@ -29,12 +30,12 @@ class func_proxy(object):
         data: bytes,
         option: int,
         need_ack: bool = False,
-        _ack_retry_count: int = None,
+        _ack_retry_count: Optional[int] = None,
     ):
         # logger.debug(
         #     f"[FC_Server] Transmited: option={option} data={bytes_to_str(data)}"
         # )
-        return self.fc.send_data_to_fc(data, option, need_ack, _ack_retry_count)
+        return self.fc.send_data_to_fc(data, option, need_ack, _ack_retry_count)  # type: ignore
 
 
 class FC_Server(FC_Application):
@@ -159,9 +160,7 @@ class FC_Client(FC_Application):
         """
         客户端无需监听串口, 调用start_sync_state替代
         """
-        logger.warning(
-            "[FC_Client] do not need to start serial listening, auto calling start_sync_state instead"
-        )
+        logger.warning("[FC_Client] do not need to start serial listening, auto calling start_sync_state instead")
         return self.start_sync_state(print_state, callback)
 
     def start_sync_state(self, print_state=True, callback=None):
@@ -247,10 +246,8 @@ class FC_Client(FC_Application):
         data: bytes,
         option: int,
         need_ack: bool = False,
-        _ack_retry_count: int = None,
+        _ack_retry_count: Optional[int] = None,
     ):
         if not self._func_proxy:
             raise Exception("FC_Client not connected")
-        return self._func_proxy.send_data_to_fc(
-            data, option, need_ack, _ack_retry_count
-        )
+        return self._func_proxy.send_data_to_fc(data, option, need_ack, _ack_retry_count) # type: ignore

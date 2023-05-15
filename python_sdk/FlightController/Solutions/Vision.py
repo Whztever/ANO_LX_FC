@@ -32,9 +32,7 @@ def vision_debug() -> None:
     cv2.waitKey(10)
 
 
-def black_line(
-    image, type: int = 1, theta_threshold=0.25
-) -> Tuple[bool, float, float, float]:
+def black_line(image, type: int = 1, theta_threshold=0.25) -> Tuple[bool, float, float, float]:
     """
     寻找画面中的黑线并返回数据
     type: 0:横线 1:竖线
@@ -207,8 +205,7 @@ def find_laser_point(img) -> Tuple[bool, float, float]:
             cy = int(y)
             size = img.shape
             return True, cx - size[1] / 2, cy - size[0] / 2
-    else:
-        return False, 0, 0
+    return False, 0, 0
 
 
 def pass_filter(img, kernel_size=3) -> np.ndarray:
@@ -239,7 +236,7 @@ def pass_filter(img, kernel_size=3) -> np.ndarray:
         return img
 
 
-def find_QRcode_zbar(frame) -> Tuple[bool, float, float]:
+def find_QRcode_zbar(frame) -> Tuple[bool, float, float, str]:
     """
     使用pyzbar寻找条码
     return: 是否找到条码, x偏移值(右正), y偏移值(下正), 条码内容
@@ -353,7 +350,7 @@ def rescale_aspect_ratio(img, width: int, height: int) -> np.ndarray:
 
 def get_ROI(
     img,
-    ROI: Tuple[Union[int, float]],
+    ROI: Tuple[Union[int, float], ...],
 ) -> np.ndarray:
     """
     获取兴趣区
@@ -365,7 +362,7 @@ def get_ROI(
         y = int(y * img.shape[0])
         w = int(w * img.shape[1])
         h = int(h * img.shape[0])
-    return img[y : y + h, x : x + w]
+    return img[int(y) : int(y + h), int(x) : int(x + w)]
 
 
 class HSV(object):
@@ -440,9 +437,7 @@ def shape_recognition(image, LOWER, UPPER):
     closed = cv2.dilate(closed, None, iterations=5)
     if _DEBUG:
         cv2.imshow("Process", mask)
-    contours, hierarchy = cv2.findContours(
-        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:
         for cnt in range(len(contours)):
             if _DEBUG:
@@ -487,9 +482,7 @@ def dp_outline_calc(frame) -> int:
     gray_frame = cv2.GaussianBlur(gray_frame, (19, 19), 0)  # 高斯滤波进行平滑处理
     # 处理图像轮廓
     ret, thresh = cv2.threshold(gray_frame, 127, 255, 0)
-    contours, hierarchy = cv2.findContours(
-        thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-    )
+    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) == 0:
         return 0
     contours = list(contours)
@@ -525,9 +518,7 @@ def FLANN_match(train_img, frame) -> Tuple[int, Tuple[float, float]]:
     search_params = dict(checks=50)
     flann = cv2.FlannBasedMatcher(index_params, search_params)
     # matches = flann.knnMatch(des1, des2, k=2) # BUG:数据类型转换错误
-    matches = flann.knnMatch(
-        np.asarray(des1, np.float32), np.asarray(des2, np.float32), k=2
-    )
+    matches = flann.knnMatch(np.asarray(des1, np.float32), np.asarray(des2, np.float32), k=2)
     # 最小匹配选择
     good = []
     for m, n in matches:
@@ -535,14 +526,12 @@ def FLANN_match(train_img, frame) -> Tuple[int, Tuple[float, float]]:
             good.append(m)
 
     if len(good) > MIN_MATCH_COUNT:
-        src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+        src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)  # type: ignore
+        dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)  # type: ignore
 
         M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
         h, w = train_img.shape[:2]
-        pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(
-            -1, 1, 2
-        )
+        pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)  # type: ignore
         dst = np.int32(cv2.perspectiveTransform(pts, M))
         p1, p2, p3, p4 = dst.reshape(4, 2)
         center_point = (p1 + p2 + p3 + p4) / 4
@@ -555,9 +544,7 @@ def FLANN_match(train_img, frame) -> Tuple[int, Tuple[float, float]]:
                 matchesMask=matchesMask,  # draw only inliers
                 flags=2,
             )
-            img3 = cv2.drawMatches(
-                train_img, kp1, frame, kp2, good, None, **draw_params
-            )
+            img3 = cv2.drawMatches(train_img, kp1, frame, kp2, good, None, **draw_params)
             cv2.imshow("Process", img3)
         ####### 目标匹配
         if _DEBUG:
@@ -605,6 +592,7 @@ class Meanshift(object):
     LOW_PASS_RATIO = 1
     TERM_ITER = 10  # 终止条件: 迭代次数
     TERM_MOVE = 1  # 终止条件: 移动距离
+
     ###########################
     def __init__(self, init_ROI: Tuple[Union[int, float]]):
         """
@@ -659,7 +647,7 @@ class Meanshift(object):
             cv2.imshow("Result", output_img)
         return cx - self.img_shape[1] / 2, cy - self.img_shape[0] / 2
 
-    def reset_roi(self, ROI: Tuple[Union[int, float]] = None) -> None:
+    def reset_roi(self, ROI: Optional[Tuple[Union[int, float], ...]] = None) -> None:
         """
         重置ROI
         """
@@ -689,15 +677,9 @@ def mixed_background_sub(frame) -> Tuple[bool, list[tuple[float, float]]]:
         __bs = cv2.createBackgroundSubtractorKNN(detectShadows=True)
     fgmask = __bs.apply(frame)
     th = cv2.threshold(fgmask, 244, 255, cv2.THRESH_BINARY)[1]  # 将非纯白色像素设为0
-    th = cv2.erode(
-        th, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=2
-    )  # 腐蚀图像
-    dilated = cv2.dilate(
-        th, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (8, 3)), iterations=2
-    )  # 膨胀处理
-    contours, hier = cv2.findContours(
-        dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+    th = cv2.erode(th, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=2)  # 腐蚀图像
+    dilated = cv2.dilate(th, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (8, 3)), iterations=2)  # 膨胀处理
+    contours, hier = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     detection_list = []
     for c in contours:
         if cv2.contourArea(c) > 1000:
@@ -847,7 +829,7 @@ class fps_counter:
     def __init__(self, max_sample=60) -> None:
         self.t = time.time()
         self.max_sample = max_sample
-        self.t_list = []
+        self.t_list: List[float] = []
 
     def update(self) -> None:
         self.t_list.append(time.time() - self.t)
@@ -902,9 +884,9 @@ def stack_images(imgArray, scale=0.5, lables=[]) -> np.ndarray:
             imgArray[x] = cv2.resize(imgArray[x], (0, 0), None, scale, scale)
             if len(imgArray[x].shape) == 2:
                 imgArray[x] = cv2.cvtColor(imgArray[x], cv2.COLOR_GRAY2BGR)
-        hor = np.hstack(imgArray)
+        hor = np.hstack(imgArray)  # type: ignore
         hor_con = np.concatenate(imgArray)
-        ver = hor
+        ver = hor  # type: ignore
     if len(lables) != 0:
         eachImgWidth = int(ver.shape[1] / cols)
         eachImgHeight = int(ver.shape[0] / rows)

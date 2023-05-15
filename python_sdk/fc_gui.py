@@ -84,17 +84,13 @@ class MainWindow(Ui_MainWindow, QMainWindow):
                 self.line_info.setText("")
         if text == "远端服务":
             try:
-                self.server_ip, ok = QInputDialog.getText(
-                    self, "远端服务", "请输入IP地址:", QLineEdit.Normal, self.server_ip
-                )
+                self.server_ip, ok = QInputDialog.getText(self, "远端服务", "请输入IP地址:", QLineEdit.Normal, self.server_ip)
                 if not ok:
                     return
                 self.print_log("正在连接...")
                 self.fc = FC_Client()
                 self.fc.connect(self.server_ip)
-                self.fc.start_sync_state(
-                    callback=self.update_fc_state, print_state=False
-                )
+                self.fc.start_sync_state(callback=self.update_fc_state, print_state=False)
                 self.print_log("连接成功")
             except Exception as e:
                 self.print_log(f"连接失败, {e}")
@@ -103,9 +99,7 @@ class MainWindow(Ui_MainWindow, QMainWindow):
             try:
                 self.print_log("正在连接...")
                 self.fc = FC_Controller()
-                self.fc.start_listen_serial(
-                    text, 500000, callback=self.update_fc_state, print_state=False
-                )
+                self.fc.start_listen_serial(text, 500000, callback=self.update_fc_state, print_state=False)
                 self.print_log("串口连接成功")
             except Exception as e:
                 self.print_log(f"连接失败, {e}")
@@ -345,17 +339,13 @@ class MainWindow(Ui_MainWindow, QMainWindow):
             return
         self.fc.set_flight_mode(self.fc.PROGRAM_MODE)
         self.fc.set_height(1, self.box_height.value(), self.box_vert_param.value())
-        self.print_log(
-            f"设置目标高度为 {self.box_height.value()} 厘米, 平均速度 {self.box_vert_param.value()}"
-        )
+        self.print_log(f"设置目标高度为 {self.box_height.value()} 厘米, 平均速度 {self.box_vert_param.value()}")
 
     @Slot()
     def on_btn_rgb_clicked(self) -> None:
         if self.fc is None:
             return
-        s, ok = QInputDialog.getText(
-            self, "设置WS2812 RGB", "RGB(hex):", QLineEdit.Normal, "#000000"
-        )
+        s, ok = QInputDialog.getText(self, "设置WS2812 RGB", "RGB(hex):", QLineEdit.Normal, "#000000")
         if not ok:
             return
         try:

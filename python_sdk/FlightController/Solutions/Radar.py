@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import List, Literal, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -6,7 +6,7 @@ import numpy as np
 from ..Components.LDRadar_Resolver import Point_2D
 
 
-def radar_resolve_rt_pose(img, _DEBUG=False) -> list[float, float, float]:
+def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """
     从雷达点云图像中解析出中点位置
     img: 雷达点云图像(灰度图)
@@ -44,16 +44,12 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> list[float, float, float]:
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line[0]
-            if (
-                x1 > x0 and x2 > x0 and ((y1 > y0 and y2 < y0) or (y1 < y0 and y2 > y0))
-            ):  # 右侧线
+            if x1 > x0 and x2 > x0 and ((y1 > y0 and y2 < y0) or (y1 < y0 and y2 > y0)):  # 右侧线
                 if x1 > x2:
                     right_lines.append((x2, y2, x1, y1))
                 else:
                     right_lines.append((x1, y1, x2, y2))
-            elif (
-                y1 > y0 and y2 > y0 and ((x1 > x0 and x2 < x0) or (x1 < x0 and x2 > x0))
-            ):  # 下侧线
+            elif y1 > y0 and y2 > y0 and ((x1 > x0 and x2 < x0) or (x1 < x0 and x2 > x0)):  # 下侧线
                 if y1 > y2:
                     back_lines.append((x2, y2, x1, y1))
                 else:
@@ -105,9 +101,7 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> list[float, float, float]:
     return x_out, y_out, yaw_out
 
 
-def get_point_line_distance(
-    x1, y1, x2, y2, x3, y3, type: Literal[0, 1] = 0
-) -> tuple[float, float]:
+def get_point_line_distance(x1, y1, x2, y2, x3, y3, type: Literal[0, 1] = 0) -> tuple[float, float]:
     """
     计算点到线的距离
     p1: 目标点
@@ -122,13 +116,9 @@ def get_point_line_distance(
             deg = deg - 180
         return deg
 
-    distance = abs((y3 - y2) * x1 - (x3 - x2) * y1 + x3 * y2 - y3 * x2) / np.sqrt(
-        (y3 - y2) ** 2 + (x3 - x2) ** 2
-    )
+    distance = abs((y3 - y2) * x1 - (x3 - x2) * y1 + x3 * y2 - y3 * x2) / np.sqrt((y3 - y2) ** 2 + (x3 - x2) ** 2)
     if type == 0:
-        theta = deg_180_90(
-            (np.pi / 2 + np.arctan((y3 - y2) / (x3 - x2 + 0.0000001))) * 180 / np.pi
-        )
+        theta = deg_180_90((np.pi / 2 + np.arctan((y3 - y2) / (x3 - x2 + 0.0000001))) * 180 / np.pi)
     elif type == 1:
         theta = np.arctan((y3 - y2) / (x3 - x2 + 0.0000001)) * 180 / np.pi
     return (distance, theta)

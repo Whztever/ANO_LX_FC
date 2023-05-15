@@ -115,9 +115,7 @@ class QRScanner_Yolo(object):
                     boxes.append([left, top, width, height])
                     confidences.append(float(confidence))
                     centers.append((center_x, center_y))
-        indices = cv2.dnn.NMSBoxes(
-            boxes, confidences, self.confThreshold, self.nmsThreshold
-        )
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, self.confThreshold, self.nmsThreshold)
         indices = np.array(indices).flatten().tolist()
         ret = [(centers[i], confidences[i]) for i in indices]
         if self.drawOutput:
@@ -214,9 +212,7 @@ class FastestDet:
                     preds.append([x1, y1, x2, y2, score, classId])
                     boxes.append([x1, y1, x2 - x1, y2 - y1])
                     confidences.append(score)
-        indices = cv2.dnn.NMSBoxes(
-            boxes, confidences, self.confThreshold, self.nmsThreshold
-        )
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, self.confThreshold, self.nmsThreshold)
         indices = np.array(indices).flatten().tolist()
         for i in indices:
             pred = preds[i]
@@ -315,7 +311,7 @@ class HAWP(object):
         return frame
 
     def post_process(self, frame, feature_map):
-        """ 
+        """
         数据后处理
         """
         lines, scores = feature_map[0], feature_map[1]

@@ -40,9 +40,7 @@ class FC_Serial:
                 signed=False,
             )
             checksum &= 0xFF
-        received_checksum = int.from_bytes(
-            self.ser.read(1), byteorder=self.byte_order, signed=False
-        )
+        received_checksum = int.from_bytes(self.ser.read(1), byteorder=self.byte_order, signed=False)
         if received_checksum == checksum:
             return 1
         return 0
@@ -63,9 +61,7 @@ class FC_Serial:
                         self.waiting_buffer = bytes()
                 continue
             if self.pack_length == -1:
-                self.pack_length_bit = int.from_bytes(
-                    tmp, self.byte_order, signed=False
-                )
+                self.pack_length_bit = int.from_bytes(tmp, self.byte_order, signed=False)  # type: ignore
                 self.pack_length = self.pack_length_bit & 0b11111111
                 continue
             if self.reading_flag:
@@ -98,12 +94,7 @@ class FC_Serial:
         if not isinstance(data, bytes):
             raise TypeError("data must be bytes")
         len_as_byte = len(data).to_bytes(1, self.byte_order)
-        send_data = (
-            bytes(self.sned_start_bit)
-            + bytes(self.send_option_bit)
-            + len_as_byte
-            + data
-        )
+        send_data = bytes(self.sned_start_bit) + bytes(self.send_option_bit) + len_as_byte + data
         checksum = 0
         for i in range(0, len(send_data)):
             checksum += send_data[i]

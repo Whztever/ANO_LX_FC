@@ -1,5 +1,6 @@
 import threading
 import time
+from typing import Optional
 
 import numpy as np
 
@@ -14,7 +15,7 @@ class FC_Application(FC_Protocol):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self._realtime_control_thread = None
+        self._realtime_control_thread: threading.Thread = None  # type: ignore
         self._realtime_control_data_in_xyzYaw = [0, 0, 0, 0]
         self._realtime_control_running = False
 
@@ -176,9 +177,7 @@ class FC_Application(FC_Protocol):
         if self._realtime_control_running:
             self.stop_realtime_control()
         self._realtime_control_running = True
-        self._realtime_control_thread = threading.Thread(
-            target=self._realtime_control_task, args=(freq,), daemon=True
-        )
+        self._realtime_control_thread = threading.Thread(target=self._realtime_control_task, args=(freq,), daemon=True)
         self._thread_list.append(self._realtime_control_thread)
         self._realtime_control_thread.start()
 
@@ -190,11 +189,15 @@ class FC_Application(FC_Protocol):
         if self._realtime_control_thread:
             self._realtime_control_thread.join()
             self._thread_list.remove(self._realtime_control_thread)
-            self._realtime_control_thread = None
+            self._realtime_control_thread = None  # type: ignore
         self._realtime_control_data_in_xyzYaw = [0, 0, 0, 0]
 
     def update_realtime_control(
-        self, vel_x: int = None, vel_y: int = None, vel_z: int = None, yaw: int = None
+        self,
+        vel_x: Optional[int] = None,
+        vel_y: Optional[int] = None,
+        vel_z: Optional[int] = None,
+        yaw: Optional[int] = None,
     ) -> None:
         """
         更新自动发送实时控制的目标值
