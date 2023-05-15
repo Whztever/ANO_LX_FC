@@ -1,5 +1,6 @@
 import struct
 import time
+from typing import Optional
 
 from .Base import Byte_Var, FC_Base_Uart_Comunication
 from .Logger import logger
@@ -23,7 +24,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._byte_temp4 = Byte_Var()
         self.last_sended_command = (0, 0, 0)  # (CID,CMD_0,CMD_1)
 
-    def _action_log(self, action: str, data_info: str = None):
+    def _action_log(self, action: str, data_info: Optional[str] = None):
         if self.settings.action_log_output:
             string = f"[FC] [ACTION] {action.upper()}"
             if data_info is not None:
@@ -32,13 +33,8 @@ class FC_Protocol(FC_Base_Uart_Comunication):
 
     ######### 飞控命令 #########
 
-    def _send_32_command(
-        self, suboption: int, data: bytes = b"", need_ack=False
-    ) -> None:
-        self._byte_temp1.reset(suboption, "u8", int)
-        sended = self.send_data_to_fc(
-            self._byte_temp1.bytes + data, 0x01, need_ack=need_ack
-        )
+    def _send_32_command(self, option: int, data: bytes = b"", need_ack=True) -> None:
+        sended = self.send_data_to_fc(data, option, need_ack=need_ack)
         # logger.debug(f"[FC] Send: {bytes_to_str(sended)}")
 
     def set_rgb_led(self, r: int, g: int, b: int) -> None:
@@ -49,18 +45,10 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._byte_temp1.reset(r, "u8", int)
         self._byte_temp2.reset(g, "u8", int)
         self._byte_temp3.reset(b, "u8", int)
-        self._send_32_command(
-            0x01,
-            self._byte_temp1.bytes
-            + self._byte_temp2.bytes
-            + self._byte_temp3.bytes
-            + b"\x11",  # 帧结尾
-        )
+        self._send_32_command(0x02, self._byte_temp1.bytes + self._byte_temp2.bytes + self._byte_temp3.bytes)
         self._action_log("set rgb led", f"#{r:02X}{g:02X}{b:02X}")
 
-    def send_general_position(
-        self, x: int = -2_147_483_648, y: int = -2_147_483_648, z: int = -2_147_483_648
-    ) -> None:
+    def send_general_position(self, x: int = -2_147_483_648, y: int = -2_147_483_648, z: int = -2_147_483_648) -> None:
         """
         通用数据传感器回传
         x,y,z: cm
@@ -69,15 +57,9 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         x = x if x is not None else -2_147_483_648
         y = y if y is not None else -2_147_483_648
         z = z if z is not None else -2_147_483_648
-        data = struct.pack("<iii", int(x), int(y), int(z))
-        self._send_32_command(
-            0x02,
-            data + b"\x22",  # 帧结尾
-        )
+        self._send_32_command(0x03, struct.pack("<iii", int(x), int(y), int(z)), False)
 
-    def send_realtime_control_data(
-        self, vel_x: int = 0, vel_y: int = 0, vel_z: int = 0, yaw: int = 0
-    ) -> None:
+    def send_realtime_control_data(self, vel_x: int = 0, vel_y: int = 0, vel_z: int = 0, yaw: int = 0) -> None:
         """
         发送实时控制帧, 仅在定点模式下有效(MODE=2), 切换模式前需要确保遥控器摇杆全部归中
         在飞控内有实时控制帧的安全检查, 每个帧有效时间只有1s, 因此发送频率需要大于1Hz
@@ -86,11 +68,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         yaw: deg/s 顺时针为正
         """
         # 性能优化:因为实时控制帧需要频繁低延迟发送, 所以不做过多次变量初始化
-        data = struct.pack("<hhhh", int(vel_x), int(vel_y), int(vel_z), int(-yaw))
-        self._send_32_command(
-            0x03,
-            data + b"\x33",  # 帧结尾
-        )
+        self._send_32_command(0x04, struct.pack("<hhhh", int(vel_x), int(vel_y), int(vel_z), int(-yaw)), False)
 
     def set_PWM_output(self, channel: int, pwm: float) -> None:
         """
@@ -104,9 +82,8 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._byte_temp1.reset(channel, "u8", int)
         self._byte_temp2.reset(pwm_int, "s16", int)
         self._send_32_command(
-            0x04,
-            self._byte_temp1.bytes + self._byte_temp2.bytes + b"\x44",
-            True,  # need ack
+            0x05,
+            self._byte_temp1.bytes + self._byte_temp2.bytes,
         )
         self._action_log("set pwm output", f"channel {channel} pwm {pwm:.2f}")
 
@@ -117,13 +94,11 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         on: 开关
         """
         assert channel in [0, 1, 2, 3]
-        on = 1 if on else 0
+        on_ = 1 if on else 0
         self._byte_temp1.reset(channel, "u8", int)
-        self._byte_temp2.reset(on, "u8", int)
-        self._send_32_command(
-            0x05, self._byte_temp1.bytes + self._byte_temp2.bytes + b"\x55"
-        )
-        self._action_log("set digital output", f"channel {channel} on {on}")
+        self._byte_temp2.reset(on_, "u8", int)
+        self._send_32_command(0x06, self._byte_temp1.bytes + self._byte_temp2.bytes)
+        self._action_log("set digital output", f"channel {channel} {on}")
 
     def set_pod(self, state: int, time: int) -> None:
         """
@@ -133,9 +108,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         """
         self._byte_temp1.reset(state, "u8", int)
         self._byte_temp2.reset(time, "u32", int)
-        self._send_32_command(
-            0x06, self._byte_temp1.bytes + self._byte_temp2.bytes + b"\x66", True
-        )
+        self._send_32_command(0x07, self._byte_temp1.bytes + self._byte_temp2.bytes)
         self._action_log("set pod", f"state {state} time {time}")
 
     ######### IMU 命令 #########
@@ -149,15 +122,9 @@ class FC_Protocol(FC_Base_Uart_Comunication):
             bytes_data += b"\x00" * (8 - len(bytes_data))
         if len(bytes_data) > 8:
             raise Exception("CMD_data length is too long")
-        data_to_send = (
-            self._byte_temp1.bytes
-            + self._byte_temp2.bytes
-            + self._byte_temp3.bytes
-            + bytes_data
-        )
-        sended = self.send_data_to_fc(data_to_send, 0x02, need_ack=True)
+        data_to_send = self._byte_temp1.bytes + self._byte_temp2.bytes + self._byte_temp3.bytes + bytes_data
+        self._send_32_command(0x01, data_to_send)
         self.last_sended_command = (CID, CMD0, CMD1)
-        # logger.debug(f"[FC] Send: {bytes_to_str(sended)}")
 
     def _check_mode(self, target_mode) -> bool:
         """
@@ -246,9 +213,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
             0x03,
             self._byte_temp1.bytes + self._byte_temp2.bytes + self._byte_temp3.bytes,
         )
-        self._action_log(
-            "horizontal move", f"{distance}cm, {speed}cm/s, {direction}deg"
-        )
+        self._action_log("horizontal move", f"{distance}cm, {speed}cm/s, {direction}deg")
 
     def go_up(self, distance: int, speed: int) -> None:
         """
@@ -259,9 +224,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._check_mode(3)
         self._byte_temp1.reset(distance, "u16", int)
         self._byte_temp2.reset(speed, "u16", int)
-        self._send_imu_command_frame(
-            0x10, 0x02, 0x01, self._byte_temp1.bytes + self._byte_temp2.bytes
-        )
+        self._send_imu_command_frame(0x10, 0x02, 0x01, self._byte_temp1.bytes + self._byte_temp2.bytes)
         self._action_log("go up", f"{distance}cm, {speed}cm/s")
 
     def go_down(self, distance: int, speed: int) -> None:
@@ -273,9 +236,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._check_mode(3)
         self._byte_temp1.reset(distance, "u16", int)
         self._byte_temp2.reset(speed, "u16", int)
-        self._send_imu_command_frame(
-            0x10, 0x02, 0x02, self._byte_temp1.bytes + self._byte_temp2.bytes
-        )
+        self._send_imu_command_frame(0x10, 0x02, 0x02, self._byte_temp1.bytes + self._byte_temp2.bytes)
         self._action_log("go down", f"{distance}cm, {speed}cm/s")
 
     def turn_left(self, deg: int, speed: int) -> None:
@@ -287,9 +248,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._check_mode(3)
         self._byte_temp1.reset(deg, "u16", int)
         self._byte_temp2.reset(speed, "u16", int)
-        self._send_imu_command_frame(
-            0x10, 0x02, 0x07, self._byte_temp1.bytes + self._byte_temp2.bytes
-        )
+        self._send_imu_command_frame(0x10, 0x02, 0x07, self._byte_temp1.bytes + self._byte_temp2.bytes)
         self._action_log("turn left", f"{deg}deg, {speed}deg/s")
 
     def turn_right(self, deg: int, speed: int) -> None:
@@ -301,9 +260,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._check_mode(3)
         self._byte_temp1.reset(deg, "u16", int)
         self._byte_temp2.reset(speed, "u16", int)
-        self._send_imu_command_frame(
-            0x10, 0x02, 0x08, self._byte_temp1.bytes + self._byte_temp2.bytes
-        )
+        self._send_imu_command_frame(0x10, 0x02, 0x08, self._byte_temp1.bytes + self._byte_temp2.bytes)
         self._action_log("turn right", f"{deg}deg, {speed}deg/s")
 
     def set_height(self, source: int, height: int, speed: int) -> None:
@@ -356,9 +313,7 @@ class FC_Protocol(FC_Base_Uart_Comunication):
         self._check_mode(3)
         self._byte_temp1.reset(x, "s32", int)
         self._byte_temp2.reset(y, "s32", int)
-        self._send_imu_command_frame(
-            0x10, 0x01, 0x01, self._byte_temp1.bytes + self._byte_temp2.bytes
-        )
+        self._send_imu_command_frame(0x10, 0x01, 0x01, self._byte_temp1.bytes + self._byte_temp2.bytes)
         self._action_log("set target position", f"{x}, {y}")
 
     def set_target_height(self, height: int) -> None:

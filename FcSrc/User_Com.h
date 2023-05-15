@@ -60,12 +60,6 @@ typedef union {
   _to_user_st st_data;
 } _to_user_un;
 
-// ACK数据结构
-typedef struct {
-  u8 ack_data;
-  u8 WTS;
-} __attribute__((__packed__)) _user_ack_st;
-
 //通用位置数据结构
 typedef struct {
   u8 pos_update_cnt;
