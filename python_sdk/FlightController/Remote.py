@@ -5,8 +5,9 @@ from multiprocessing.managers import BaseManager, EventProxy, ListProxy  # type:
 from threading import Event, Thread
 from typing import Optional
 
+from loguru import logger
+
 from .Application import FC_Application
-from .Logger import logger
 
 
 def get_ip():
@@ -250,4 +251,4 @@ class FC_Client(FC_Application):
     ):
         if not self._func_proxy:
             raise Exception("FC_Client not connected")
-        return self._func_proxy.send_data_to_fc(data, option, need_ack, _ack_retry_count) # type: ignore
+        return self._func_proxy.send_data_to_fc(data, option, need_ack, _ack_retry_count)  # type: ignore

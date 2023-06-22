@@ -3,7 +3,7 @@ import time
 from typing import Optional
 
 from .Base import Byte_Var, FC_Base_Uart_Comunication
-from .Logger import logger
+from loguru import logger
 
 
 class FC_Protocol(FC_Base_Uart_Comunication):

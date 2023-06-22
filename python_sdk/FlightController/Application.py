@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 
-from .Logger import logger
+from loguru import logger
 from .Protocal import FC_Protocol
 
 

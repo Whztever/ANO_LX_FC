@@ -5,8 +5,8 @@ from re import I
 import cv2
 import numpy as np
 import serial
+from loguru import logger
 
-from ..Logger import logger
 from ..Solutions.Radar import radar_resolve_rt_pose
 from .LDRadar_Resolver import Map_360, Point_2D, Radar_Package, resolve_radar_data
 
@@ -107,13 +107,9 @@ class LD_Radar(object):
                     self._map_updated_event.clear()
                     if self._fp_flag:
                         if self._fp_type == 0:
-                            self._update_target_point(
-                                self.map.find_nearest(*self._fp_arg)
-                            )
+                            self._update_target_point(self.map.find_nearest(*self._fp_arg))
                         elif self._fp_type == 1:
-                            self._update_target_point(
-                                self.map.find_nearest_with_ext_point_opt(*self._fp_arg)
-                            )
+                            self._update_target_point(self.map.find_nearest_with_ext_point_opt(*self._fp_arg))
                     if self._rtpose_flag:
                         img = self.map.output_cloud(
                             size=int(self._rtpose_size),
@@ -138,9 +134,7 @@ class LD_Radar(object):
                                 self._rt_pose_inited[1] = True
                         if yaw is not None:
                             if self._rt_pose_inited[2]:
-                                self.rt_pose[2] += (
-                                    yaw - self.rt_pose[2]
-                                ) * self._rtpose_low_pass_ratio
+                                self.rt_pose[2] += (yaw - self.rt_pose[2]) * self._rtpose_low_pass_ratio
                             else:
                                 self.rt_pose[2] = yaw
                                 self._rt_pose_inited[2] = True
@@ -150,9 +144,7 @@ class LD_Radar(object):
             except Exception as e:
                 import traceback
 
-                logger.error(
-                    f"[RADAR] Map resolve thread error: {traceback.format_exc()}"
-                )
+                logger.error(f"[RADAR] Map resolve thread error: {traceback.format_exc()}")
                 time.sleep(0.5)
 
     def _init_radar_map(self):
@@ -184,12 +176,8 @@ class LD_Radar(object):
             else:
                 self.__radar_map_img_scale *= 0.9
             self.__radar_map_img_scale = min(max(0.001, self.__radar_map_img_scale), 2)
-        elif event == cv2.EVENT_LBUTTONDOWN or (
-            event == cv2.EVENT_MOUSEMOVE and flags & cv2.EVENT_FLAG_LBUTTON
-        ):
-            self.__radar_map_info_angle = (
-                90 - np.arctan2(300 - y, x - 300) * 180 / np.pi
-            ) % 360
+        elif event == cv2.EVENT_LBUTTONDOWN or (event == cv2.EVENT_MOUSEMOVE and flags & cv2.EVENT_FLAG_LBUTTON):
+            self.__radar_map_info_angle = (90 - np.arctan2(300 - y, x - 300) * 180 / np.pi) % 360
             self.__radar_map_info_angle = int(self.__radar_map_info_angle)
 
     def show_radar_map(self):
@@ -259,13 +247,9 @@ class LD_Radar(object):
                     (255, 255, 0),
                 )
                 add_p = [point] + add_p
-                pos = point.to_cv_xy() * self.__radar_map_img_scale + np.array(
-                    [300, 300]
-                )
+                pos = point.to_cv_xy() * self.__radar_map_img_scale + np.array([300, 300])
                 cv2.line(img_, (300, 300), (int(pos[0]), int(pos[1])), (255, 255, 0), 1)
-            self.map.draw_on_cv_image(
-                img_, scale=self.__radar_map_img_scale, add_points=add_p
-            )
+            self.map.draw_on_cv_image(img_, scale=self.__radar_map_img_scale, add_points=add_p)
             cv2.imshow("Radar Map", img_)
             key = cv2.waitKey(int(1000 / 50))
             if key == ord("q"):
@@ -329,16 +313,11 @@ class LD_Radar(object):
         """
         目标点超时判断
         """
-        if (
-            not self.fp_timeout_flag
-            and time.time() - self._fp_update_time > self._fp_timeout
-        ):
+        if not self.fp_timeout_flag and time.time() - self._fp_update_time > self._fp_timeout:
             self.fp_timeout_flag = True
             logger.warning("[Radar] lost point!")
 
-    def start_resolve_pose(
-        self, size: int = 1000, scale_ratio: float = 1, low_pass_ratio: float = 0.5
-    ):
+    def start_resolve_pose(self, size: int = 1000, scale_ratio: float = 1, low_pass_ratio: float = 0.5):
         """
         开始使用点云图解算位姿
         size: 解算范围(长宽为size的正方形)
@@ -361,9 +340,7 @@ class LD_Radar(object):
         self._rt_pose_inited = [False, False, False]
         self.rt_pose_update_event.clear()
 
-    def update_resolve_pose_args(
-        self, size: int = 1000, ratio: float = 1, low_pass_ratio: float = 0.5
-    ):
+    def update_resolve_pose_args(self, size: int = 1000, ratio: float = 1, low_pass_ratio: float = 0.5):
         """
         更新参数
         size: 解算范围(长宽为size的正方形)

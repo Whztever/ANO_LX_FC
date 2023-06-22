@@ -4,7 +4,7 @@ import time
 import traceback
 from typing import List, Optional
 
-from .Logger import logger
+from loguru import logger
 from .Serial import FC_Serial
 
 

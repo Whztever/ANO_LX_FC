@@ -1,5 +1,4 @@
 from .Application import FC_Application as __FC_without_remote_layer__
-from .Logger import logger
 from .Remote import FC_Client, FC_Server
 
 

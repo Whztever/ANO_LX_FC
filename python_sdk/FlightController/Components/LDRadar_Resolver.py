@@ -4,9 +4,9 @@ from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
+from loguru import logger
 from scipy.signal import find_peaks
 
-from ..Logger import logger
 from ._Driver_Components import calculate_crc8
 
 
@@ -191,10 +191,7 @@ class Map_360(object):
         """
         deg_values_dict = {}
         for point in data.points:
-            if (
-                point.distance < self.distance_threshold
-                or point.confidence < self.confidence_threshold
-            ):
+            if point.distance < self.distance_threshold or point.confidence < self.confidence_threshold:
                 continue
             base = int(point.degree + 0.5)
             degs = [base - 1, base, base + 1]  # 扩大点映射范围, 加快更新速度, 降低精度
@@ -222,11 +219,7 @@ class Map_360(object):
         """
         截取选定角度范围的点
         """
-        return [
-            Point_2D(deg, self.data[deg])
-            for deg in range(from_, to_ + 1)
-            if self.data[deg] != -1
-        ]
+        return [Point_2D(deg, self.data[deg]) for deg in range(from_, to_ + 1) if self.data[deg] != -1]
 
     def clear(self):
         """
@@ -242,9 +235,7 @@ class Map_360(object):
         self.data = np.roll(self.data, angle)
         self.time_stamp = np.roll(self.time_stamp, angle)
 
-    def find_nearest(
-        self, from_: int = 0, to_: int = 359, num=1, range_limit: int = 1e7, view=None
-    ) -> List[Point_2D]:
+    def find_nearest(self, from_: int = 0, to_: int = 359, num=1, range_limit: int = 1e7, view=None) -> List[Point_2D]:
         """
         在给定范围内查找给定个数的最近点
         from_: int 起始角度
@@ -329,13 +320,7 @@ class Map_360(object):
                     vector = fd_points[i].to_xy() - fd_points[j].to_xy()
                     delta_dis = np.sqrt(vector.dot(vector))
                     if abs(delta_dis - distance) < threshold:
-                        deg = (
-                            abs(
-                                fd_points[i].to_180_degree()
-                                + fd_points[j].to_180_degree()
-                            )
-                            / 2
-                        )
+                        deg = abs(fd_points[i].to_180_degree() + fd_points[j].to_180_degree()) / 2
                         dis = (fd_points[i].distance + fd_points[j].distance) / 2
                         get_list.append((fd_points[i], fd_points[j], dis, deg))
             if len(get_list) > 0:
@@ -371,9 +356,7 @@ class Map_360(object):
                 cv2.circle(img, tuple(pos.astype(int)), point_size, color, -1)
         for point in add_points:
             pos = center_point + point.to_cv_xy() * scale
-            cv2.circle(
-                img, (int(pos[0]), int(pos[1])), add_points_size, add_points_color, -1
-            )
+            cv2.circle(img, (int(pos[0]), int(pos[1])), add_points_size, add_points_color, -1)
         cv2.putText(
             img,
             f"RPM={self.rotation_spd:.2f} CNT={self.update_count}",
