@@ -1,11 +1,11 @@
+import datetime
 import math
 import time
+from dataclasses import dataclass
 from typing import Any, Tuple
 
 import pyrealsense2 as rs
 from loguru import logger
-
-BACK = "\033[F"
 
 
 def quaternions_to_euler(w, x, y, z):
@@ -21,84 +21,52 @@ def quaternions_to_euler(w, x, y, z):
 
     # mathod 3
     # Resolve the gimbal lock problem
-    r = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
     sinp = 2.0 * (w * y - z * x)
     p = math.copysign(math.pi / 2, sinp) if abs(sinp) >= 1 else math.asin(sinp)
+    r = math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
     y = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
-    # convert axis and radians to degrees
-    r, p, y = -y / math.pi * 180, r / math.pi * 180, p / math.pi * 180
+    # convert radians to degrees
+    r, p, y = math.degrees(r), math.degrees(p), math.degrees(y)
     return r, p, y
 
 
-class T265_State(object):
-    p_x: float = 0.0  # translation x / m
-    p_y: float = 0.0  # translation y / m
-    p_z: float = 0.0  # translation z / m
-    v_x: float = 0.0  # velocity x / m/s
-    v_y: float = 0.0  # velocity y / m/s
-    v_z: float = 0.0  # velocity z / m/s
-    a_x: float = 0.0  # acceleration x / m/s^2
-    a_y: float = 0.0  # acceleration y / m/s^2
-    a_z: float = 0.0  # acceleration z / m/s^2
-    av_x: float = 0.0  # angular velocity x / rad/s
-    av_y: float = 0.0  # angular velocity y / rad/s
-    av_z: float = 0.0  # angular velocity z / rad/s
-    aa_x: float = 0.0  # angular acceleration x / rad/s^2
-    aa_y: float = 0.0  # angular acceleration y / rad/s^2
-    aa_z: float = 0.0  # angular acceleration z / rad/s^2
-    r_w: float = 0.0  # rotation w / quaternion
-    r_x: float = 0.0  # rotation x / quaternion
-    r_y: float = 0.0  # rotation y / quaternion
-    r_z: float = 0.0  # rotation z / quaternion
-    track_conf: int = 0  # tracker confidence
-    mapper_conf: int = 0  # mapper confidence
-    frame_num: int = 0  # frame number
-    timestamp: float = 0.0  # timestamp
+@dataclass
+class T265_Pose_Frame(object):
+    @dataclass
+    class _XYZ:
+        x: float
+        y: float
+        z: float
 
-    def update(
-        self, data: Any, as_pose_frame: bool = False, as_frames: bool = False, lightweight: bool = False
-    ) -> None:
-        if as_frames:
-            data = data.get_pose_frame()
-            as_pose_frame = True
-        if as_pose_frame:
-            if not data:
-                return
-            if not lightweight:
-                self.timestamp = data.timestamp
-                self.frame_num = data.frame_number
-            data = data.get_pose_data()
-        self.p_x, self.p_y, self.p_z = data.translation.x, data.translation.y, data.translation.z
-        self.r_w, self.r_x, self.r_y, self.r_z = data.rotation.w, data.rotation.x, data.rotation.y, data.rotation.z
-        if not lightweight:
-            self.v_x, self.v_y, self.v_z = data.velocity.x, data.velocity.y, data.velocity.z
-            self.a_x, self.a_y, self.a_z = data.acceleration.x, data.acceleration.y, data.acceleration.z
-            self.av_x, self.av_y, self.av_z = data.angular_velocity.x, data.angular_velocity.y, data.angular_velocity.z
-            self.aa_x, self.aa_y, self.aa_z = (
-                data.angular_acceleration.x,
-                data.angular_acceleration.y,
-                data.angular_acceleration.z,
-            )
-            self.track_conf, self.mapper_conf = data.tracker_confidence, data.mapper_confidence
+    @dataclass
+    class _WXYZ:
+        w: float
+        x: float
+        y: float
+        z: float
 
-    @property
-    def euler(self) -> tuple[float, float, float]:
-        return quaternions_to_euler(self.r_w, self.r_x, self.r_y, self.r_z)
+    translation: _XYZ
+    rotation: _WXYZ
+    velocity: _XYZ
+    acceleration: _XYZ
+    angular_velocity: _XYZ
+    angular_acceleration: _XYZ
+    tracker_confidence: int
+    mapper_confidence: int
 
-    def __str__(self):
-        r, p, y = self.euler
-        return (
-            f"T265 Pose Frame #{self.frame_num} at {self.timestamp}:\n"
-            f"Position       :{self.p_x:10.6f}, {self.p_y:10.6f}, {self.p_z:10.6f};\n"
-            f"Velocity       :{self.v_x:10.6f}, {self.v_y:10.6f}, {self.v_z:10.6f};\n"
-            f"Acceleration   :{self.a_x:10.6f}, {self.a_y:10.6f}, {self.a_z:10.6f};\n"
-            f"Angular vel    :{self.av_x:10.6f}, {self.av_y:10.6f}, {self.av_z:10.6f};\n"
-            f"Angular accel  :{self.aa_x:10.6f}, {self.aa_y:10.6f}, {self.aa_z:10.6f};\n"
-            f"Rotation       :{self.r_w:10.6f}, {self.r_x:10.6f}, {self.r_y:10.6f}, {self.r_z:10.6f};\n"
-            f"Roll/Pitch/Yaw :{r:10.5f}, {p:10.5f}, {y:10.5f};\n"
-            f"Tracker confidence: {self.track_conf}, Mapper confidence: {self.mapper_conf}"
-        )
+
+"""
+note:
+T265 pose coordinate system
+            y
+         z  ^
+          \ |
+           \|
+   x<---[ (O O)]
+pitch-dx, yaw-dy, roll-dz
+all axes are right-handed.
+"""
 
 
 class T265(object):
@@ -112,7 +80,9 @@ class T265(object):
         """
         初始化 T265
         """
-        self.state = T265_State()
+        self.pose: T265_Pose_Frame = None  # type: ignore
+        self.frame_num: int = 0  # frame number
+        self.frame_timestamp: float = 0.0  # timestamp
         self.running = False
         if log_to_file:
             rs.log_to_file(getattr(rs.log_severity, log_level), "rs_t265.log")
@@ -120,7 +90,8 @@ class T265(object):
             rs.log_to_console(getattr(rs.log_severity, log_level))
         self._connect(**args)
         self._connect_args = args
-        self._cali_offset = [0.0, 0.0, 0.0]
+        self._cali_pos_offset = [0.0, 0.0, 0.0]
+        self._cali_eular_offset = [0.0, 0.0, 0.0]
 
     def _connect(self, **args) -> None:
         self._pipe = rs.pipeline()
@@ -146,41 +117,70 @@ class T265(object):
 
     def _callback(self, frame) -> None:
         pose = frame.as_pose_frame()
-        self.state.update(pose, as_pose_frame=True, lightweight=self._lightweight_update)
+        if not pose:
+            return
+        self.frame_num = pose.frame_number
+        self.frame_timestamp = pose.timestamp
+        self.pose = pose.get_pose_data()
         if self._print_update:
-            print(f"{self.state}{BACK* 8}", end="")
+            self.print_pose()
+        self._update_count += 1
 
-    def start(self, async_: bool = True, print_update: bool = False, lightweight_update: bool = False) -> None:
+    def print_pose(self) -> None:
+        BACK = "\033[F"
+        r, p, y = self.eular_rotation
+        try:
+            text = (
+                f"T265 Pose Frame #{self.frame_num} at {datetime.datetime.fromtimestamp(self.frame_timestamp / 1000)}\n"
+                f"Translation    :{self.pose.translation.x:10.6f}, {self.pose.translation.y:10.6f}, {self.pose.translation.z:10.6f};\n"
+                f"Velocity       :{self.pose.velocity.x:10.6f}, {self.pose.velocity.y:10.6f}, {self.pose.velocity.z:10.6f};\n"
+                f"Acceleration   :{self.pose.acceleration.x:10.6f}, {self.pose.acceleration.y:10.6f}, {self.pose.acceleration.z:10.6f};\n"
+                f"Angular vel    :{self.pose.angular_velocity.x:10.6f}, {self.pose.angular_velocity.y:10.6f}, {self.pose.angular_velocity.z:10.6f};\n"
+                f"Angular accel  :{self.pose.angular_acceleration.x:10.6f}, {self.pose.angular_acceleration.y:10.6f}, {self.pose.angular_acceleration.z:10.6f};\n"
+                f"Rotation       :{self.pose.rotation.w:10.6f}, {self.pose.rotation.x:10.6f}, {self.pose.rotation.y:10.6f}, {self.pose.rotation.z:10.6f};\n"
+                f"Roll/Pitch/Yaw :{r:10.5f}, {p:10.5f}, {y:10.5f};\n"
+                f"Tracker conf: {self.pose.tracker_confidence}, Mapper conf: {self.pose.mapper_confidence}"
+            )
+        except Exception as e:
+            logger.exception(e)
+        print(f"{text}{BACK* 8}", end="")
+
+    def start(self, async_update: bool = True, print_update: bool = False) -> None:
         """
         开始监听 T265
-        async_: 是否使用回调的方式监听, 若为 False, 则需要手动调用 update() 方法
+        async_update: 是否使用异步回调的方式监听, 若为 False, 则需要手动调用 update() 方法
         print_update: 是否在控制台打印更新
         lightweight_update: 是否使用轻量级更新(仅更新位置和四元数姿态数据)
         """
-        self._async = async_
+        self._async = async_update
         self._print_update = print_update
-        self._lightweight_update = lightweight_update
         if self._async:
             self._pipe.start(self._cfg, self._callback)
         else:
             self._pipe.start(self._cfg)
-        self.start_time = time.perf_counter()
+        self._update_count = 0
+        self._start_time = time.perf_counter()
         self.running = True
         logger.info("T265 started")
 
     def update(self):
         """
-        更新 T265 状态
+        更新 T265 状态(阻塞直到有新的数据帧到来)
         """
         if not self.running:
             raise RuntimeError("T265 is not running")
         if self._async:
-            raise RuntimeError("It's not necessary to call update() when async is True")
+            raise RuntimeError("Async mode")
         frames = self._pipe.wait_for_frames()
         pose = frames.get_pose_frame()
-        self.state.update(pose, as_pose_frame=True, lightweight=self._lightweight_update)
+        if not pose:
+            return
+        self.frame_num = pose.frame_number
+        self.frame_timestamp = pose.timestamp
+        self.pose = pose.get_pose_data()
         if self._print_update:
-            print(f"{self.state}{BACK* 8}", end="")
+            self.print_pose()
+        self._update_count += 1
 
     def stop(self) -> None:
         """
@@ -195,11 +195,14 @@ class T265(object):
         """
         获取 T265 的平均更新速率
         """
-        return self.state.frame_num / (time.perf_counter() - self.start_time)
+        fps = self._update_count / (time.perf_counter() - self._start_time)
+        self._update_count = 0
+        self._start_time = time.perf_counter()
+        return fps
 
     def hardware_reset(self) -> None:
         """
-        强制重置 T265
+        强制重置 T265 并重新连接
         """
         self._device.hardware_reset()
         logger.warning("T265 hardware reset, waiting for reconnection...")
@@ -209,14 +212,21 @@ class T265(object):
                 break
             except RuntimeError:
                 time.sleep(1)
+        if self.running:
+            if self._async:
+                self._pipe.start(self._cfg, self._callback)
+            else:
+                self._pipe.start(self._cfg)
+            self._update_count = 0
+            self._start_time = time.perf_counter()
 
-    def calibrate(self, x: float = 0, y: float = 0, z: float = 0) -> None:
+    def calibrate_pos(self, x: float = 0, y: float = 0, z: float = 0) -> None:
         """
-        软件计算偏移值
+        软件计算位移偏移值
         x, y, z: 实际位置
         """
-        self._cali_offset = [x - self.state.p_x, y - self.state.p_y, z - self.state.p_z]
-        logger.info(f"Calibration offset: {self._cali_offset}")
+        self._cali_pos_offset = [x - self.pose.translation.x, y - self.pose.translation.y, z - self.pose.translation.z]
+        logger.info(f"Calibration offset: {self._cali_pos_offset}")
 
     @property
     def calibrated_pos(self) -> Tuple[float, float, float]:
@@ -224,9 +234,50 @@ class T265(object):
         获取校准后的位置
         """
         return (
-            self.state.p_x + self._cali_offset[0],
-            self.state.p_y + self._cali_offset[1],
-            self.state.p_z + self._cali_offset[2],
+            self.pose.translation.x + self._cali_pos_offset[0],
+            self.pose.translation.y + self._cali_pos_offset[1],
+            self.pose.translation.z + self._cali_pos_offset[2],
+        )
+
+    def calibrate_eular(self, r: float = 0, p: float = 0, y: float = 0) -> None:
+        """
+        软件计算欧拉角偏移值
+        r, p, y: 实际欧拉角
+        """
+        tr, tp, ty = self.eular_rotation
+        self._cali_eular_offset = [r - tr, p - tp, y - ty]
+        logger.info(f"Calibration offset: {self._cali_eular_offset}")
+
+    @property
+    def calibrated_eular(self) -> Tuple[float, float, float]:
+        """
+        获取校准后的欧拉角
+        """
+
+        def recomp(e, size) -> float:
+            if e > size:
+                return e - 2 * size
+            elif e < -size:
+                return e + 2 * size
+            else:
+                return e
+
+        tr, tp, ty = self.eular_rotation
+        return (
+            recomp(tr + self._cali_eular_offset[0], 180),
+            recomp(tp + self._cali_eular_offset[1], 90),
+            recomp(ty + self._cali_eular_offset[2], 180),
+        )
+
+    @property
+    def eular_rotation(self) -> Tuple[float, float, float]:
+        """
+        获取欧拉角姿态
+        """
+        # in convert matrices: roll (x), pitch (y), yaw (z)
+        # so we swap axis: x, y, z = r_z, r_x, r_y
+        return quaternions_to_euler(
+            self.pose.rotation.w, self.pose.rotation.z, self.pose.rotation.x, self.pose.rotation.y
         )
 
 
@@ -235,10 +286,8 @@ if __name__ == "__main__":
     # t265.hardware_reset()
     t265.start(print_update=True)
     try:
-        # while True:
-        #     time.sleep(1)
-        time.sleep(5)
-        t265.calibrate(0, 0, 0)
-        time.sleep(10)
+        while True:
+            time.sleep(20)
+            # t265.hardware_reset()
     finally:
         t265.stop()
