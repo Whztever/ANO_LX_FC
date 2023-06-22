@@ -1,3 +1,4 @@
+import re
 import struct
 import threading
 import time
@@ -5,6 +6,7 @@ import traceback
 from typing import List, Optional
 
 from loguru import logger
+
 from .Serial import FC_Serial
 
 
@@ -154,6 +156,57 @@ class FC_State_Struct:
     @property
     def command_now(self):
         return (self.cid.value, self.cmd_0.value, self.cmd_1.value)
+
+    def print(self):
+        RED = "\033[1;31m"
+        GREEN = "\033[1;32m"
+        YELLOW = "\033[1;33m"
+        BLUE = "\033[1;34m"
+        CYAN = "\033[1;36m"
+        PURPLE = "\033[1;35m"
+        RESET = "\033[0m"
+        BACK = "\033[F"
+        LINELIMIT = 100  # 每行最多显示的字符数
+        LOG_SPACE = 3  # 为日志留出的空间
+        BOXCOLOR = BLUE
+        HEAD = f"{BOXCOLOR}| {RESET}"
+        TAIL = f"{BOXCOLOR} |{RESET}"
+        lines = [
+            BOXCOLOR
+            + "-" * ((LINELIMIT - 32) // 2)
+            + f" ▲ System log / ▼ System status "
+            + "-" * ((LINELIMIT - 32) // 2)
+            + RESET,
+            HEAD,
+        ]
+
+        def remove_color(text):
+            return re.sub(r"\033\[[0-9;]*m", "", text)
+
+        def len_s(text):
+            return len(remove_color(text))
+
+        varlist = [
+            f"{YELLOW}{var.name}: {f'{GREEN}√ ' if var.value else f'{RED}x {RESET}'}"
+            if type(var.value) == bool
+            else (
+                f"{YELLOW}{var.name}:{CYAN}{var.value:^7.02f}{RESET}"
+                if type(var.value) == float
+                else f"{YELLOW}{var.name}:{CYAN}{var.value:^4d}{RESET}"
+            )
+            for var in self.RECV_ORDER
+        ]
+        for vartext in varlist:
+            if len_s(lines[-1]) + len_s(vartext) > LINELIMIT - 2:
+                lines[-1] += " " * (LINELIMIT - len_s(lines[-1]) - 2) + TAIL
+                lines.append(HEAD)
+            lines[-1] += vartext
+        lines[-1] += " " * (LINELIMIT - len_s(lines[-1]) - 2) + TAIL
+        lines.append(f"{BOXCOLOR}{'-' * LINELIMIT}{RESET}")
+        for _ in range(LOG_SPACE):
+            lines.insert(0, " " * LINELIMIT)
+        text = "\n".join(lines) + BACK * (len(lines) - 1)
+        print(text, end="")
 
 
 class FC_Event:
@@ -397,7 +450,7 @@ class FC_Base_Uart_Comunication(object):
             if callable(self._state_update_callback):
                 self._state_update_callback(self.state)
             if self._print_state_flag:
-                self._print_state()
+                self.state.print()
         except Exception as e:
             logger.error(f"[FC] Update state exception: {traceback.format_exc()}")
 
@@ -418,56 +471,3 @@ class FC_Base_Uart_Comunication(object):
                 self._event_update_callback(event_code, event_operator)
         except Exception as e:
             logger.error(f"[FC] Update event exception: {traceback.format_exc()}")
-
-    def _print_state(self):
-        import re
-
-        RED = "\033[1;31m"
-        GREEN = "\033[1;32m"
-        YELLOW = "\033[1;33m"
-        BLUE = "\033[1;34m"
-        CYAN = "\033[1;36m"
-        PURPLE = "\033[1;35m"
-        RESET = "\033[0m"
-        BACK = "\033[F"
-        LINELIMIT = 100  # 每行最多显示的字符数
-        LOG_SPACE = 3  # 为日志留出的空间
-        BOXCOLOR = BLUE
-        HEAD = f"{BOXCOLOR}| {RESET}"
-        TAIL = f"{BOXCOLOR} |{RESET}"
-        lines = [
-            BOXCOLOR
-            + "-" * ((LINELIMIT - 32) // 2)
-            + f" ▲ System log / ▼ System status "
-            + "-" * ((LINELIMIT - 32) // 2)
-            + RESET,
-            HEAD,
-        ]
-
-        def remove_color(text):
-            return re.sub(r"\033\[[0-9;]*m", "", text)
-
-        def len_s(text):
-            return len(remove_color(text))
-
-        varlist = [
-            f"{YELLOW}{var.name}: {f'{GREEN}√ ' if var.value else f'{RED}x {RESET}'}"
-            if type(var.value) == bool
-            else (
-                f"{YELLOW}{var.name}:{CYAN}{var.value:^7.02f}{RESET}"
-                if type(var.value) == float
-                else f"{YELLOW}{var.name}:{CYAN}{var.value:^4d}{RESET}"
-            )
-            for var in self.state.RECV_ORDER
-        ]
-        for vartext in varlist:
-            if len_s(lines[-1]) + len_s(vartext) > LINELIMIT - 2:
-                lines[-1] += " " * (LINELIMIT - len_s(lines[-1]) - 2) + TAIL
-                lines.append(HEAD)
-            lines[-1] += vartext
-        lines[-1] += " " * (LINELIMIT - len_s(lines[-1]) - 2) + TAIL
-        lines.append(f"{BOXCOLOR}{'-' * LINELIMIT}{RESET}")
-        for _ in range(LOG_SPACE):
-            lines.insert(0, " " * LINELIMIT)
-        text = "\n".join(lines) + BACK * (len(lines) - 1)
-        print(text, end="")
