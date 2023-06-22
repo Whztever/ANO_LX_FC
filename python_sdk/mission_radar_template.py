@@ -1,10 +1,13 @@
+"""
+使用雷达作为位置闭环的任务模板
+"""
 import threading
 from time import sleep, time
 
 import cv2
 import numpy as np
 from configManager import ConfigManager
-from FlightController import FC_Client, FC_Controller, logger
+from FlightController import FC_Client, FC_Controller
 from FlightController.Components import LD_Radar, Map_360, Point_2D
 from FlightController.Solutions.Vision import (
     change_cam_resolution,
@@ -14,76 +17,50 @@ from FlightController.Solutions.Vision import (
 from FlightController.Solutions.Vision_Net import FastestDetOnnx
 from hmi import HMI
 from just_playback import Playback
+from loguru import logger
 from simple_pid import PID
 
 
 def deg_360_180(deg):
-    while deg > 180:
-        deg -= 360
-    while deg < -180:
-        deg += 360
+    if deg > 180:
+        deg = deg - 360
     return deg
 
 
 cfg = ConfigManager()
 
 # 基地点
-BASE_POINT = np.array([75, 75])
-
-# 左边，正面进入
-ENTER_PATH_1 = np.array([[110, 275]])
-ENTER_TURN_1 = 0
-# 左边，侧面进入
-ENTER_PATH_2 = np.array([[270, 125]])
-ENTER_TURN_2 = -90
-# 中间，正面进入
-ENTER_PATH_3 = np.array([[75, 200]])
-ENTER_TURN_3 = 0
-# 中间，侧面进入
-ENTER_PATH_4 = np.array([[200, 70]])
-ENTER_TURN_4 = -90
-# 右边，正面进入
-ENTER_PATH_5 = np.array([[120, 120]])
-ENTER_TURN_5 = 0
-# 右边，侧面进入
-ENTER_PATH_6 = np.array([[110, 275], [270, 270]])
-ENTER_TURN_6 = 90
-
-POINT_ID = cfg.get_int("enter-point") - 1
-ENTER_PATH = (
-    ENTER_PATH_1,
-    ENTER_PATH_2,
-    ENTER_PATH_3,
-    ENTER_PATH_4,
-    ENTER_PATH_5,
-    ENTER_PATH_6,
-)[POINT_ID]
-logger.info(f"[MISSION] Loaded enter path {ENTER_PATH}")
-ENTER_TURN = (
-    ENTER_TURN_1,
-    ENTER_TURN_2,
-    ENTER_TURN_3,
-    ENTER_TURN_4,
-    ENTER_TURN_5,
-    ENTER_TURN_6,
-)[POINT_ID]
-logger.info(f"[MISSION] Loaded enter turn {ENTER_TURN}")
+BASE_POINT = cfg.get_array("point-0")
+logger.info(f"[MISSION] Loaded base point: {BASE_POINT}")
+# 降落点
+landing_point = BASE_POINT
+# 任务坐标
+NULL_PT = np.array([np.NaN, np.NaN])
+POINT = lambda x: cfg.get_array(f"point-{x}")
+POINTS_ARR = np.array(
+    [
+        [POINT(1), NULL_PT, POINT(11), NULL_PT, POINT(5)],
+        [NULL_PT, POINT(8), NULL_PT, POINT(3), NULL_PT],
+        [POINT(9), NULL_PT, POINT(2), NULL_PT, POINT(12)],
+        [NULL_PT, POINT(7), NULL_PT, POINT(6), NULL_PT],
+        [NULL_PT, NULL_PT, POINT(10), NULL_PT, POINT(4)],
+    ]
+)
+logger.info(f"[MISSION] Loaded points: {POINTS_ARR}")
+target_points = [cfg.get_array("target-x")]
+logger.info(f"[MISSION] Loaded target points: {target_points}")
 
 
 class Mission(object):
-    def __init__(
-        self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture, hmi: HMI
-    ):
+    def __init__(self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture, hmi: HMI):
         self.fc = fc
         self.radar = radar
         self.cam = camera
         self.hmi = hmi
         self.inital_yaw = self.fc.state.yaw.value
-        self.playback = Playback()
+        self.fd = FastestDetOnnx(drawOutput=True)  # 初始化神经网络
         ############### PID #################
-        self.height_pid = PID(
-            0.8, 0.0, 0.1, setpoint=0, output_limits=(-30, 30), auto_mode=False
-        )
+        self.height_pid = PID(0.8, 0.0, 0.1, setpoint=0, output_limits=(-30, 30), auto_mode=False)
         self.navi_x_pid = PID(
             0.4,
             0,
@@ -130,7 +107,6 @@ class Mission(object):
         self.precision_speed = 25  # 精确速度
         self.cruise_height = 140  # 巡航高度
         self.goods_height = 80  # 处理物品高度
-        self.across_height = 140  # 钻圈高度(待调)
         self.pid_tunings = {
             "default": (0.35, 0, 0.08),  # 导航
             "delivery": (0.4, 0.05, 0.16),  # 配送
@@ -138,13 +114,9 @@ class Mission(object):
         }  # PID参数 (仅导航XY使用)
         ################ 启动线程 ################
         self.running = True
-        self.thread_list.append(
-            threading.Thread(target=self.keep_height_task, daemon=True)
-        )
+        self.thread_list.append(threading.Thread(target=self.keep_height_task, daemon=True))
         self.thread_list[-1].start()
-        self.thread_list.append(
-            threading.Thread(target=self.navigation_task, daemon=True)
-        )
+        self.thread_list.append(threading.Thread(target=self.navigation_task, daemon=True))
         self.thread_list[-1].start()
         logger.info("[MISSION] Threads started")
         ################ 初始化 ################
@@ -154,42 +126,34 @@ class Mission(object):
         for _ in range(10):
             cam.read()
         fc.set_PWM_output(0, self.camera_up_pwm)
+        # self.recognize_targets()
         fc.set_flight_mode(fc.PROGRAM_MODE)
         self.set_navigation_speed(self.navigation_speed)
-        # self.playback.loop_at_end(True)
-        # self.playback.play()
         for i in range(6):
             sleep(0.25)
             fc.set_rgb_led(255, 0, 0)  # 起飞前警告
             sleep(0.25)
             fc.set_rgb_led(0, 0, 0)
-        # self.playback.stop()
         fc.set_PWM_output(0, self.camera_down_pwm)
         fc.set_digital_output(2, True)  # 激光笔开启
         fc.set_action_log(True)
         self.fc.start_realtime_control(20)
         self.switch_pid("default")
         ################ 初始化完成 ################
-        logger.info("[MISSION] Mission-3 Started")
+        logger.info("[MISSION] Mission-1 Started")
         self.pointing_takeoff(BASE_POINT)
         ################ 开始任务 ################
-        for point in ENTER_PATH:
-            self.navigation_to_waypoint(point)
+        for target_point in target_points:
+            x, y = target_point
+            target_point_pos = POINTS_ARR[y, x]
+            self.navigation_to_waypoint(target_point_pos)
             self.wait_for_waypoint()
-        self.navigation_flag = False  # 暂停导航
-        if ENTER_TURN != 0:
-            fc.set_flight_mode(fc.PROGRAM_MODE)
-            if ENTER_TURN < 0:
-                fc.turn_left(abs(ENTER_TURN), 45)
-            else:
-                fc.turn_right(ENTER_TURN, 45)
-            fc.wait_for_hovering()
-            fc.set_flight_mode(fc.HOLD_POS_MODE)
-        self.across_hoop()
-        ##########################################
-        fc.set_flight_mode(fc.PROGRAM_MODE)
-        fc.land()
-        logger.info("[MISSION] Misson-3 Finished")
+        ######## 回到基地点
+        logger.info("[MISSION] Go to base")
+        self.navigation_to_waypoint(BASE_POINT)
+        self.wait_for_waypoint()
+        self.pointing_landing(landing_point)
+        logger.info("[MISSION] Misson-1 Finished")
 
     def pointing_takeoff(self, point):
         """
@@ -251,10 +215,7 @@ class Mission(object):
         paused = False
         while self.running:
             sleep(1 / 10)  # 飞控参数以20Hz回传
-            if (
-                self.keep_height_flag
-                and self.fc.state.mode.value == self.fc.HOLD_POS_MODE
-            ):
+            if self.keep_height_flag and self.fc.state.mode.value == self.fc.HOLD_POS_MODE:
                 if paused:
                     paused = False
                     self.height_pid.set_auto_mode(True, last_output=0)
@@ -277,10 +238,7 @@ class Mission(object):
         paused = False
         while self.running:
             sleep(0.01)
-            if (
-                self.navigation_flag
-                and self.fc.state.mode.value == self.fc.HOLD_POS_MODE
-            ):
+            if self.navigation_flag and self.fc.state.mode.value == self.fc.HOLD_POS_MODE:
                 if paused:
                     paused = False
                     self.navi_x_pid.set_auto_mode(True, last_output=0)
@@ -333,7 +291,6 @@ class Mission(object):
     def navigation_to_waypoint(self, waypoint):
         self.navi_x_pid.setpoint = waypoint[0]
         self.navi_y_pid.setpoint = waypoint[1]
-        logger.info("[MISSION] Navigation to waypoint: %s", waypoint)
 
     def set_navigation_speed(self, speed):
         speed = abs(speed)
@@ -360,107 +317,65 @@ class Mission(object):
                 logger.warning("[MISSION] Waypoint overtime")
                 return
 
-    def across_hoop(self):
-        fc = self.fc
-        radar = self.radar
-        self.height_pid.setpoint = self.across_height
-        sleep(2)  # 等待高度稳定
-        radar.start_find_point(1, 0, -45, 45, 1, 3000)
-        y_locked = False  # y 是否锁定
-        x_locked = False  # x 是否锁定
-        y_pid = PID(1.2, 0.02, 0.05, setpoint=0, output_limits=(-15, 15))
-        x_pid = PID(
-            0.6, 0.02, 0.05, setpoint=50, output_limits=(-15, 15), auto_mode=False
-        )
-        self.navigation_flag = False  # 暂停导航
+    def wait_for_waypoint_with_avoidance(self, time_thres=1, pos_thres=15, timeout=60):
+        time_count = 0
+        time_start = time()
         while True:
             sleep(0.1)
-            if radar.fp_timeout_flag:
-                fc.update_realtime_control(vel_x=0, vel_y=0)
-            if len(radar.fp_points) > 0:
-                deg = deg_360_180(radar.fp_points[0].degree)
-                dis = radar.fp_points[0].distance / 10
-                logger.info("[MISSION] find point A: %.2f, %.2f" % (deg, dis))
-                out_y = y_pid(deg)
-                fc.update_realtime_control(vel_y=out_y)
-                if -5 < deg < 5:
-                    if not y_locked:
-                        y_locked = True
-                        logger.info("[MISSION] Y locked")
-                        x_pid.set_auto_mode(True)
-                if y_locked:
-                    out_x = x_pid(dis)
-                    fc.update_realtime_control(vel_x=-out_x)
-                    if -5 < dis - 50 < 5:
-                        if not x_locked:
-                            x_locked = True
-                            ok_time = time()
-                            logger.info("[MISSION] X locked")
-                if x_locked:
-                    if time() - ok_time > 2:
-                        break
-            else:
-                fc.update_realtime_control(vel_x=0, vel_y=0)
-        fc.update_realtime_control(vel_x=0, vel_y=0)
-        dis_pid = PID(
-            0.6, 0.02, 0.05, setpoint=50, output_limits=(-20, 20), auto_mode=True
-        )
-        yaw_pid = PID(
-            0.6, 0.02, 0.1, setpoint=20, output_limits=(-45, 45), auto_mode=False
-        )
-        yaw_locked = False  # yaw 是否锁定
-        x_locked = False  # x 是否锁定
-        radar.update_find_point_args(-30, 30, 1, 3000)
-        last_yaw = fc.state.yaw.value
-        turn_count = 0
-        logger.info("[MISSION] Start across hoop")
-        self.keep_height_flag = False  # 暂停高度控制
-        while True:
-            sleep(0.1)
-            if radar.fp_timeout_flag:
-                fc.update_realtime_control(vel_x=0, vel_y=0, yaw=0)
-            if len(radar.fp_points) > 0:
-                deg = deg_360_180(radar.fp_points[0].degree)
-                dis = radar.fp_points[0].distance / 10
-                logger.info("[MISSION] find point B: %.2f, %.2f" % (deg, dis))
-                out_dis = dis_pid(dis)
-                fc.update_realtime_control(vel_x=-out_dis)
-                if abs(dis - dis_pid.setpoint) < 10:
-                    if not x_locked:
-                        x_locked = True
-                        yaw_pid.set_auto_mode(True)
-                        logger.info("[MISSION] X locked")
-                if x_locked:
-                    out_yaw = yaw_pid(deg)
-                    if out_yaw is not None:
-                        fc.update_realtime_control(yaw=-out_yaw)
-                        if abs(deg - yaw_pid.setpoint) < 5:
-                            if not yaw_locked:
-                                yaw_locked = True
-                                logger.info("[MISSION] Yaw locked")
-                if x_locked and yaw_locked:
-                    radar.update_find_point_args(-30, 30, 1, 1000)
-                    fc.update_realtime_control(vel_y=-8)
-            else:
-                # 没有雷达点，x速度置为零
-                fc.update_realtime_control(vel_x=0, vel_y=0, yaw=0)
-            current_yaw = fc.state.yaw.value
-            diff = abs(current_yaw - last_yaw)
-            last_yaw = current_yaw
-            if diff > 180:
-                diff = 360 - diff
-            turn_count += diff
-            # if turn_count > 100:
-            #     ok_points = radar.map.find_nearest(-135, -45, 1)  # 左边
-            #     if len(ok_points) > 0:
-            #         deg2 = deg_360_180(ok_points[0].degree)
-            #         dis2 = ok_points[0].distance / 10
-            #         logger.info("[MISSION] find point C: %.2f, %.2f" % (deg2, dis2))
-            #         if 120 < dis2 < 150:
-            #             logger.info("[MISSION] Stop hoop")
-            #             break
-            if turn_count > 300:
-                logger.info("[MISSION] Stop hoop")
-                break
-        fc.update_realtime_control(vel_x=0, vel_y=0, yaw=0)
-        logger.info("[MISSION] Across hoop OK")
+            if self.reached_waypoint(pos_thres):
+                time_count += 0.1
+            if time_count >= time_thres:
+                logger.info("[MISSION] Reached waypoint")
+                return
+            if time() - time_start > timeout:
+                logger.warning("[MISSION] Waypoint overtime")
+                return
+            self.avoidance_handler()
+
+    def avoidance_handler(self):
+        points = self.radar.map.find_nearest(self._avd_fp_from, self._avd_fp_to, 1, self._avd_fp_dist)
+        if len(points) > 0:
+            logger.info("[MISSION] Found obstacle")
+            waypoint = np.array([self.navi_x_pid.setpoint, self.navi_y_pid.setpoint])
+            pos_point = np.array([self.radar.rt_pose[0], self.radar.rt_pose[1]])
+            self.navigation_to_waypoint(pos_point)  # 原地停下
+            self.height_pid.setpoint = self._avd_height
+            self.fc.set_rgb_led(255, 0, 0)
+            sleep(1)
+            self.fc.set_rgb_led(0, 0, 0)
+            sleep(1)  # 等待高度稳定
+            self.keep_height_flag = False
+            self.navigation_flag = False
+            self.fc.set_flight_mode(self.fc.PROGRAM_MODE)
+            self.fc.horizontal_move(self._avd_move, 25, self._avd_deg)
+            self.fc.set_rgb_led(255, 255, 0)
+            self.fc.wait_for_last_command_done()
+            self.fc.set_rgb_led(0, 0, 0)
+            self.fc.set_flight_mode(self.fc.HOLD_POS_MODE)
+            self.keep_height_flag = True
+            self.height_pid.setpoint = self.cruise_height
+            sleep(1)  # 等待高度稳定
+            self.navigation_flag = True
+            self.navigation_to_waypoint(waypoint)
+
+    def set_avoidance_args(
+        self,
+        deg: int = 0,
+        deg_range: int = 30,
+        dist: int = 600,
+        avd_height: int = 200,
+        avd_move: int = 150,
+    ):
+        """
+        fp_deg: 目标避障角度(deg) (0~360)
+        fp_deg_range: 目标避障角度范围(deg)
+        fp_dist: 目标避障距离(mm)
+        avd_height: 避障目标高度(cm)
+        avd_move: 避障移动距离(cm)
+        """
+        self._avd_fp_from = deg - deg_range
+        self._avd_fp_to = deg + deg_range
+        self._avd_fp_dist = dist
+        self._avd_height = avd_height
+        self._avd_deg = deg
+        self._avd_move = avd_move

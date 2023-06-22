@@ -14,9 +14,10 @@ from time import sleep, time
 import cv2
 import numpy as np
 from configManager import ConfigManager
-from FlightController import FC_Client, FC_Controller, logger
+from FlightController import FC_Client, FC_Controller
 from FlightController.Components import LD_Radar, Map_360, Point_2D
 from hmi import HMI
+from loguru import logger
 
 
 def self_reboot():
