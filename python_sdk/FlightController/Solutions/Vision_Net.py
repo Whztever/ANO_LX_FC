@@ -235,6 +235,13 @@ class FastestDet:
         return self.post_process(frame, pred)
 
 
+onnx_providers = [
+    "CPUExecutionProvider",
+    # "CUDAExecutionProvider",
+    # "TensorrtExecutionProvider",
+]
+
+
 class FastestDetOnnx(FastestDet):
     """
     使用 onnxruntime 运行 FastestDet 目标检测网络
@@ -254,7 +261,7 @@ class FastestDetOnnx(FastestDet):
         self.classes = list(map(lambda x: x.strip(), open(path_names, "r").readlines()))
         self.inpWidth = 352
         self.inpHeight = 352
-        self.session = onnxruntime.InferenceSession(path_onnx)
+        self.session = onnxruntime.InferenceSession(path_onnx, onnx_providers)
         self.confThreshold = confThreshold
         self.nmsThreshold = nmsThreshold
         self.drawOutput = drawOutput
@@ -268,6 +275,77 @@ class FastestDetOnnx(FastestDet):
         input_name = self.session.get_inputs()[0].name
         feature_map = self.session.run([], {input_name: blob})[0][0]
         return self.post_process(frame, feature_map)
+
+
+class DAMO_YOLO(object):
+    def __init__(self, confThreshold=0.5, nmsThreshold=0.5, drawOutput=False):
+        import onnxruntime as ort
+
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        path_names = os.path.join(path, "damoyolo.names")  # 识别类别
+        path_onnx = os.path.join(path, "damoyolo.onnx")
+        self.classes = list(map(lambda x: x.strip(), open(path_names, "r").readlines()))
+        self.num_class = len(self.classes)
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        self.session = ort.InferenceSession(path_onnx, so, providers=onnx_providers)
+        model_inputs = self.session.get_inputs()
+        self.input_name = model_inputs[0].name
+        self.input_shape = model_inputs[0].shape
+        self.input_height = int(self.input_shape[2])
+        self.input_width = int(self.input_shape[3])
+        self.confThreshold = confThreshold
+        self.nmsThreshold = nmsThreshold
+        self.drawOutput = drawOutput
+
+    def detect(self, frame):
+        """
+        执行识别
+        return: 识别结果列表: (中点坐标, 类型名称, 置信度)
+        """
+        temp_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        padded_image = np.ones((self.input_height, self.input_width, 3), dtype=np.uint8)
+        ratio = min(
+            self.input_height / temp_image.shape[0],
+            self.input_width / temp_image.shape[1],
+        )
+        neww, newh = int(temp_image.shape[1] * ratio), int(temp_image.shape[0] * ratio)
+        temp_image = cv2.resize(temp_image, (neww, newh), interpolation=cv2.INTER_LINEAR)
+        padded_image[:newh, :neww, :] = temp_image
+
+        padded_image = padded_image.transpose(2, 0, 1)
+        padded_image = np.expand_dims(padded_image, axis=0).astype(np.float32)
+
+        # Inference
+        results = self.session.run(None, {self.input_name: padded_image})
+
+        scores, bboxes = results[0].squeeze(axis=0), results[1].squeeze(axis=0)
+        bboxes /= ratio
+
+        boxes, confidences, classIds = [], [], []
+        for i in range(bboxes.shape[0]):
+            score = np.max(scores[i, :])
+            if score < self.confThreshold:
+                continue
+
+            class_id = np.argmax(scores[i, :])
+            x, y, xmax, ymax = bboxes[i, :].astype(np.int32)
+            width, height = xmax - x, ymax - y
+
+            boxes.append([x, y, width, height])
+            classIds.append(class_id)
+            confidences.append(score)
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, self.confThreshold, self.nmsThreshold)
+        indices = np.array(indices).flatten().tolist()
+        ret = []
+        for i in indices:
+            box = boxes[i]
+            x1, x2, y1, y2 = box[0], box[0] + box[2], box[1], box[1] + box[3]
+            center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+            score, class_id = confidences[i], classIds[i]
+            ret.append((center, self.classes[class_id], score))
+            if self.drawOutput:
+                frame = draw_pred(frame, self.classes[class_id], score, x1, y1, x2, y2)
 
 
 class HAWP(object):
