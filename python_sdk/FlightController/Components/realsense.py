@@ -2,7 +2,7 @@ import datetime
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Tuple
+from typing import Any, Callable, Tuple
 
 import pyrealsense2 as rs
 from loguru import logger
@@ -33,39 +33,43 @@ def quaternions_to_euler(w, x, y, z):
 
 @dataclass
 class T265_Pose_Frame(object):
+    """
+    T265 姿态数据帧
+    """
+
     @dataclass
-    class _XYZ:
+    class _XYZ:  # 三维坐标
         x: float
         y: float
         z: float
 
     @dataclass
-    class _WXYZ:
+    class _WXYZ:  # 四元数
         w: float
         x: float
         y: float
         z: float
 
-    translation: _XYZ
-    rotation: _WXYZ
-    velocity: _XYZ
-    acceleration: _XYZ
-    angular_velocity: _XYZ
-    angular_acceleration: _XYZ
-    tracker_confidence: int
-    mapper_confidence: int
+    translation: _XYZ  # 位移 / m
+    rotation: _WXYZ  # 四元数姿态
+    velocity: _XYZ  # 速度 / m/s
+    acceleration: _XYZ  # 加速度 / m/s^2
+    angular_velocity: _XYZ  # 角速度 / rad/s
+    angular_acceleration: _XYZ  # 角加速度 / rad/s^2
+    tracker_confidence: int  # 跟踪置信度 0: Failed, 1: Low, 2: Medium, 3: High
+    mapper_confidence: int  # 建图置信度 0: Failed, 1: Low, 2: Medium, 3: High
 
 
 """
 note:
-T265 pose coordinate system
+T265 姿态坐标系
             y
          z  ^
           \ |
            \|
    x<---[ (O O)]
 pitch-dx, yaw-dy, roll-dz
-all axes are right-handed.
+所有轴向均为右手系
 """
 
 
@@ -92,20 +96,18 @@ class T265(object):
         self._connect_args = args
         self._cali_pos_offset = [0.0, 0.0, 0.0]
         self._cali_eular_offset = [0.0, 0.0, 0.0]
+        self._callbacks: list[Callable] = []
 
     def _connect(self, **args) -> None:
         self._pipe = rs.pipeline()
         self._cfg = rs.config()
         self._cfg.enable_stream(rs.stream.pose)
-        # self._cfg.enable_stream(rs.stream.fisheye, 1)  # left
-        # self._cfg.enable_stream(rs.stream.fisheye, 2)  # right
-        # self._cfg.enable_stream(rs.stream.accel)
-        # self._cfg.enable_stream(rs.stream.gyro)
         self._device = self._cfg.resolve(self._pipe).get_device()
         logger.info(f"Connected to {self._device}")
         logger.debug(f"Device sensors: {self._device.query_sensors()}")
         pose_sensor = self._device.first_pose_sensor()
         logger.debug(f"Pose sensor: {pose_sensor}")
+        pose_sensor.set_option(rs.option.enable_auto_exposure, args.get("enable_auto_exposure", 1))
         pose_sensor.set_option(rs.option.enable_mapping, args.get("enable_mapping", 1))
         pose_sensor.set_option(rs.option.enable_map_preservation, args.get("enable_map_preservation", 1))
         pose_sensor.set_option(rs.option.enable_relocalization, args.get("enable_relocalization", 1))
@@ -125,29 +127,31 @@ class T265(object):
         if self._print_update:
             self.print_pose()
         self._update_count += 1
+        if self._callbacks:
+            for callback in self._callbacks:
+                callback(self.pose, self.frame_num, self.frame_timestamp)
 
-    def print_pose(self) -> None:
+    def print_pose(self, refresh=True) -> None:
         BACK = "\033[F"
         r, p, y = self.eular_rotation
-        try:
-            text = (
-                f"T265 Pose Frame #{self.frame_num} at {datetime.datetime.fromtimestamp(self.frame_timestamp / 1000)}\n"
-                f"Translation    :{self.pose.translation.x:10.6f}, {self.pose.translation.y:10.6f}, {self.pose.translation.z:10.6f};\n"
-                f"Velocity       :{self.pose.velocity.x:10.6f}, {self.pose.velocity.y:10.6f}, {self.pose.velocity.z:10.6f};\n"
-                f"Acceleration   :{self.pose.acceleration.x:10.6f}, {self.pose.acceleration.y:10.6f}, {self.pose.acceleration.z:10.6f};\n"
-                f"Angular vel    :{self.pose.angular_velocity.x:10.6f}, {self.pose.angular_velocity.y:10.6f}, {self.pose.angular_velocity.z:10.6f};\n"
-                f"Angular accel  :{self.pose.angular_acceleration.x:10.6f}, {self.pose.angular_acceleration.y:10.6f}, {self.pose.angular_acceleration.z:10.6f};\n"
-                f"Rotation       :{self.pose.rotation.w:10.6f}, {self.pose.rotation.x:10.6f}, {self.pose.rotation.y:10.6f}, {self.pose.rotation.z:10.6f};\n"
-                f"Roll/Pitch/Yaw :{r:10.5f}, {p:10.5f}, {y:10.5f};\n"
-                f"Tracker conf: {self.pose.tracker_confidence}, Mapper conf: {self.pose.mapper_confidence}"
-            )
-        except Exception as e:
-            logger.exception(e)
-        print(f"{text}{BACK* 8}", end="")
+        text = (
+            f"T265 Pose Frame #{self.frame_num} at {datetime.datetime.fromtimestamp(self.frame_timestamp / 1000)}\n"
+            f"Translation    :{self.pose.translation.x:11.6f},{self.pose.translation.y:11.6f},{self.pose.translation.z:11.6f};\n"
+            f"Velocity       :{self.pose.velocity.x:11.6f},{self.pose.velocity.y:11.6f},{self.pose.velocity.z:11.6f};\n"
+            f"Acceleration   :{self.pose.acceleration.x:11.6f},{self.pose.acceleration.y:11.6f},{self.pose.acceleration.z:11.6f};\n"
+            f"Angular vel    :{self.pose.angular_velocity.x:11.6f},{self.pose.angular_velocity.y:11.6f},{self.pose.angular_velocity.z:11.6f};\n"
+            f"Angular accel  :{self.pose.angular_acceleration.x:11.6f},{self.pose.angular_acceleration.y:11.6f},{self.pose.angular_acceleration.z:11.6f};\n"
+            f"Rotation       :{self.pose.rotation.w:11.6f},{self.pose.rotation.x:11.6f},{self.pose.rotation.y:11.6f},{self.pose.rotation.z:11.6f};\n"
+            f"Roll/Pitch/Yaw :{r:11.6f},{p:11.6f},{y:11.6f};\n"
+            f"Tracker conf: {self.pose.tracker_confidence}, Mapper conf: {self.pose.mapper_confidence}"
+        )
+        if refresh:
+            print(f"{text}{BACK* 8}", end="")
 
     def start(self, async_update: bool = True, print_update: bool = False) -> None:
         """
         开始监听 T265
+
         async_update: 是否使用异步回调的方式监听, 若为 False, 则需要手动调用 update() 方法
         print_update: 是否在控制台打印更新
         lightweight_update: 是否使用轻量级更新(仅更新位置和四元数姿态数据)
@@ -181,6 +185,16 @@ class T265(object):
         if self._print_update:
             self.print_pose()
         self._update_count += 1
+        if self._callbacks:
+            for callback in self._callbacks:
+                callback(self.pose, self.frame_num, self.frame_timestamp)
+
+    def register_callback(self, callback: Callable[[T265_Pose_Frame, int, float], None]) -> None:
+        """
+        注册 T265 更新回调函数
+        回调参数: T265_Pose_Frame, 帧编号, 帧时间戳(ms)
+        """
+        self._callbacks.append(callback)
 
     def stop(self) -> None:
         """
@@ -283,7 +297,7 @@ class T265(object):
 
 if __name__ == "__main__":
     t265 = T265()
-    # t265.hardware_reset()
+    t265.hardware_reset()
     t265.start(print_update=True)
     try:
         while True:
