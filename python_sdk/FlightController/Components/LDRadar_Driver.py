@@ -8,7 +8,7 @@ import serial
 from loguru import logger
 
 from ..Solutions.Radar import radar_resolve_rt_pose
-from .LDRadar_Resolver import Map_360, Point_2D, Radar_Package, resolve_radar_data
+from .LDRadar_Resolver import Map_Circle, Point_2D, Radar_Package, resolve_radar_data
 
 
 class LD_Radar(object):
@@ -25,7 +25,7 @@ class LD_Radar(object):
         self.fp_points = []
         self.rt_pose = [0, 0, 0]
         self._rt_pose_inited = [False, False, False]
-        self.map = Map_360()
+        self.map = Map_Circle()
 
     def start(self, com_port, radar_type: str = "LD08", update_callback=None):
         """
@@ -81,7 +81,6 @@ class LD_Radar(object):
                         if len(wait_buffer) >= 2:
                             if wait_buffer[-2:] == start_bit:
                                 reading_flag = True
-                                read_count = 0
                                 wait_buffer = bytes()
                                 read_buffer = start_bit
                     else:  # 读取数据
@@ -162,7 +161,7 @@ class LD_Radar(object):
         cv2.circle(self._radar_map_img, (300, 300), 200, (255, 0, 0), 1)
         cv2.circle(self._radar_map_img, (300, 300), 300, (255, 0, 0), 1)
         self.__radar_map_img_scale = 1
-        self.__radar_map_info_angle = -1
+        self.__radar_map_info_angle = 0
         cv2.namedWindow("Radar Map", cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(
             "Radar Map",
@@ -178,9 +177,8 @@ class LD_Radar(object):
             self.__radar_map_img_scale = min(max(0.001, self.__radar_map_img_scale), 2)
         elif event == cv2.EVENT_LBUTTONDOWN or (event == cv2.EVENT_MOUSEMOVE and flags & cv2.EVENT_FLAG_LBUTTON):
             self.__radar_map_info_angle = (90 - np.arctan2(300 - y, x - 300) * 180 / np.pi) % 360
-            self.__radar_map_info_angle = int(self.__radar_map_info_angle)
 
-    def show_radar_map(self):
+    def show_radar_map(self, add_p_func=None, *args, **kwargs):
         """
         显示雷达地图(调试用, 高占用且阻塞)
         """
@@ -211,48 +209,56 @@ class LD_Radar(object):
                 0.4,
                 (255, 255, 0),
             )
-            add_p = self.map.find_two_point_with_given_distance(
-                from_=-60,
-                to_=60,
-                distance=110,
-                threshold=15,
-                range_limit=3000,
+            if add_p_func is not None:
+                add_p = add_p_func(*args, **kwargs)
+                for i, p in enumerate(add_p):
+                    cv2.putText(
+                        img_,
+                        f"AP-{i}: {p}",
+                        (10, 520 - i * 20),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 0),
+                    )
+
+            else:
+                add_p = []
+
+            cv2.putText(
+                img_,
+                f"Angle: {self.__radar_map_info_angle:.1f} (idx={round((self.__radar_map_info_angle % 360) * self.map.ACC)})",
+                (10, 540),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 0),
             )
-            print(add_p)
-            if self.__radar_map_info_angle != -1:
-                cv2.putText(
-                    img_,
-                    f"Angle: {self.__radar_map_info_angle}",
-                    (10, 540),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 0),
-                )
-                cv2.putText(
-                    img_,
-                    f"Distance: {self.map.get_distance(self.__radar_map_info_angle)}",
-                    (10, 560),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 0),
-                )
-                point = self.map.get_point(self.__radar_map_info_angle)
-                xy = point.to_xy()
-                cv2.putText(
-                    img_,
-                    f"Position: ( {xy[0]:.2f} , {xy[1]:.2f} )",
-                    (10, 580),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (255, 255, 0),
-                )
-                add_p = [point] + add_p
-                pos = point.to_cv_xy() * self.__radar_map_img_scale + np.array([300, 300])
-                cv2.line(img_, (300, 300), (int(pos[0]), int(pos[1])), (255, 255, 0), 1)
+            cv2.putText(
+                img_,
+                f"Distance: {self.map.get_distance(self.__radar_map_info_angle)}",
+                (10, 560),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 0),
+            )
+            point = self.map.get_point(self.__radar_map_info_angle)
+            xy = point.to_xy()
+            cv2.putText(
+                img_,
+                f"Position: ( {xy[0]:.2f} , {xy[1]:.2f} )",
+                (10, 580),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 0),
+            )
+            add_p = [point] + add_p
+            pos = point.to_cv_xy() * self.__radar_map_img_scale + np.array([300, 300])
+            cv2.line(img_, (300, 300), (int(pos[0]), int(pos[1])), (255, 255, 0), 1)
+
             self.map.draw_on_cv_image(img_, scale=self.__radar_map_img_scale, add_points=add_p)
             cv2.imshow("Radar Map", img_)
             key = cv2.waitKey(int(1000 / 50))
             if key == ord("q"):
+                cv2.destroyWindow("Radar Map")
                 break
             elif key == ord("w"):
                 self.__radar_map_img_scale *= 1.1

@@ -5,6 +5,15 @@ import numpy as np
 
 from ..Components.LDRadar_Resolver import Point_2D
 
+############参数设置##############
+KERNAL_DI = 9  # 膨胀核大小
+KERNAL_ER = 5  # 腐蚀核大小
+HOUGH_THRESHOLD = 80
+MIN_LINE_LENGTH = 60
+#################################
+kernel_di = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNAL_DI, KERNAL_DI))
+kernel_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNAL_ER, KERNAL_ER))
+
 
 def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """
@@ -13,14 +22,6 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[
     _DEBUG: 显示解析结果
     return: 位姿(x,y,yaw)
     """
-    ############参数设置##############
-    KERNAL_DI = 9
-    KERNAL_ER = 5
-    HOUGH_THRESHOLD = 80
-    MIN_LINE_LENGTH = 60
-    #################################
-    kernel_di = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNAL_DI, KERNAL_DI))
-    kernel_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNAL_ER, KERNAL_ER))
     img = cv2.dilate(img, kernel_di)  # 膨胀
     img = cv2.erode(img, kernel_er)  # 腐蚀
     lines = cv2.HoughLinesP(
@@ -57,19 +58,19 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[
     for line in right_lines:
         x1, y1, x2, y2 = line
         dis, yaw = get_point_line_distance(x0, y0, x1, y1, x2, y2, 0)
-        if y_out is None or dis < y_out:
+        if y_out is None or dis < y_out:  # 找最近的线
             y_out = dis
             yaw_out_1 = -yaw
         if _DEBUG:
-            cv2.line(img, (x1, y1), (x2, y2), (255, 255, 0), 2)
+            cv2.line(img, (x1, y1), (x2, y2), (255, 255, 0), 1)
     for line in back_lines:
         x1, y1, x2, y2 = line
         dis, yaw = get_point_line_distance(x0, y0, x1, y1, x2, y2, 1)
-        if x_out is None or dis < x_out:
+        if x_out is None or dis < x_out:  # 找最近的线
             x_out = dis
             yaw_out_2 = -yaw
         if _DEBUG:
-            cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), 2)
+            cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), 1)
     if yaw_out_1 and yaw_out_2:
         yaw_out = (yaw_out_1 + yaw_out_2) / 2
     elif yaw_out_1:
@@ -82,11 +83,9 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[
         x_ = x_out if x_out else -1
         y_ = y_out if y_out else -1
         yaw_ = yaw_out if yaw_out else 0
-        p = Point_2D(-yaw_ + 90, y_)
-        target = p.to_cv_xy() + np.array([x0, y0])
+        target = Point_2D(-yaw_ + 90, y_).to_cv_xy() + np.array([x0, y0])
         cv2.line(img, (x0, y0), (int(target[0]), int(target[1])), (0, 0, 255), 1)
-        p = Point_2D(-yaw_ + 180, x_)
-        target = p.to_cv_xy() + np.array([x0, y0])
+        target = Point_2D(-yaw_ + 180, x_).to_cv_xy() + np.array([x0, y0])
         cv2.line(img, (x0, y0), (int(target[0]), int(target[1])), (0, 0, 255), 1)
         cv2.putText(
             img,

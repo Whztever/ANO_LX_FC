@@ -1,3 +1,5 @@
+from loguru import logger
+
 from .Application import FC_Application as __FC_without_remote_layer__
 from .Remote import FC_Client, FC_Server
 
@@ -11,3 +13,5 @@ class FC_Controller(__FC_without_remote_layer__):
 
 
 __all__ = ["FC_Controller", "FC_Client", "FC_Server", "logger"]
+
+logger.add("fc_log/{time}.log", retention="7 days", level="DEBUG", enqueue=True)

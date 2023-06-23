@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from configManager import ConfigManager
 from FlightController import FC_Client, FC_Controller
-from FlightController.Components import LD_Radar, Map_360, Point_2D
+from FlightController.Components import LD_Radar, Map_Circle, Point_2D
 from FlightController.Solutions.Vision import (
     change_cam_resolution,
     set_cam_autowb,
