@@ -19,3 +19,4 @@ __pycache__
 *.log
 *.test.*
 *.onnx
+fc_log
