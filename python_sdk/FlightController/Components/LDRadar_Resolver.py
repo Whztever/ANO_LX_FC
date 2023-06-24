@@ -256,8 +256,14 @@ class Map_Circle(object):
         view: numpy视图, 当指定时上述参数仅num生效
         """
         if view is None:
+            from_ %= 360
+            to_ %= 360
             view = (self.data < range_limit) & (self.data >= 0)
-            view &= (self._deg_arr >= from_) & (self._deg_arr <= to_)
+            view &= (
+                (self._deg_arr >= from_) & (self._deg_arr <= to_)
+                if from_ <= to_
+                else ((self._deg_arr >= from_) | (self._deg_arr <= to_))
+            )
         indices = np.where(view)[0]
         if len(indices) == 0:
             return []
@@ -278,8 +284,14 @@ class Map_Circle(object):
         num: 查找点的个数
         range_limit:  离限制
         """
+        from_ %= 360
+        to_ %= 360
         view = (self.data < range_limit) & (self.data != -1)
-        view &= (self._deg_arr >= from_) & (self._deg_arr <= to_)
+        view &= (
+            (self._deg_arr >= from_) & (self._deg_arr <= to_)
+            if from_ <= to_
+            else ((self._deg_arr >= from_) | (self._deg_arr <= to_))
+        )
         data_view = self.data[view]
         deg_arr = np.where(view)[0]
         peak = find_peaks(-data_view)[0]
