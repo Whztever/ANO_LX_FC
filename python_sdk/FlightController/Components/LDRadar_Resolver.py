@@ -165,11 +165,11 @@ class Map_Circle(object):
     """
 
     ######### 映射方法 ########
-    ACC = 3  # 精度(总点数=360*ACC)
+    ACC = 4  # 精度(总点数=360*ACC)
+    REMAP = 2  # 映射范围(越大精度越低, 但是残影越少,实际映射范围=+-UPDATE_MAP/ACC度)
     MODE_MIN = 0  # 在范围内选择最近的点更新
     MODE_MAX = 1  # 在范围内选择最远的点更新
     MODE_AVG = 2  # 计算平均值更新
-    update_mode = MODE_MIN
     ######### 设置 #########
     confidence_threshold = 140  # 置信度阈值
     distance_threshold = 10  # 距离阈值
@@ -180,6 +180,7 @@ class Map_Circle(object):
         ######### 状态 #########
         self.rotation_spd = 0.0  # 转速 rpm
         self.update_count = 0  # 更新计数
+        self.update_mode = self.MODE_MIN
         ####### 辅助计算 #######
         self._rad_arr = np.deg2rad(np.arange(0, 360, 1 / self.ACC))  # 弧度
         self._deg_arr = np.arange(0, 360, 1 / self.ACC)  # 角度
@@ -187,8 +188,8 @@ class Map_Circle(object):
         self._cos_arr = np.cos(self._rad_arr)
         self.data = np.ones(360 * self.ACC, dtype=np.int64) * -1  # -1: 未知
         self.time_stamp = np.zeros(360 * self.ACC, dtype=np.float64)  # 时间戳
-        self.available = 0  # 有效点数
-        self.total = 360 * self.ACC  # 总点数
+        self.avail_points = 0  # 有效点数
+        self.total_points = 360 * self.ACC  # 总点数
 
     def update(self, data: Radar_Package):
         """
@@ -199,8 +200,10 @@ class Map_Circle(object):
             if point.distance < self.distance_threshold or point.confidence < self.confidence_threshold:
                 continue
             base = round(point.degree * self.ACC)
-            degs = [_ for _ in range(base - self.ACC, base + self.ACC + 1)]  # 映射 +- 1度
-            # degs = [base] # 只映射实际角度
+            if self.REMAP == 0:
+                degs = [base]  # 只映射实际角度
+            else:
+                degs = [_ for _ in range(base - self.REMAP, base + self.REMAP + 1)]
             for deg in degs:
                 deg %= 360 * self.ACC
                 if deg not in deg_values_dict:
@@ -214,12 +217,12 @@ class Map_Circle(object):
             elif self.update_mode == self.MODE_AVG:
                 self.data[deg] = round(sum(values) / len(values))
             if self.timeout_clear:
-                self.time_stamp[deg] = time.time()
+                self.time_stamp[deg] = time.perf_counter()
         if self.timeout_clear:
-            self.data[self.time_stamp < time.time() - self.timeout_time] = -1
+            self.data[self.time_stamp < time.perf_counter() - self.timeout_time] = -1
         self.rotation_spd = data.rotation_spd / 360
         self.update_count += 1
-        self.available = self.data[self.data != -1].size
+        self.avail_points = self.data[self.data != -1].size
 
     def in_deg(self, from_: float, to_: float) -> List[Point_2D]:
         """
@@ -377,7 +380,7 @@ class Map_Circle(object):
             cv2.circle(img, (int(pos[0]), int(pos[1])), add_points_size, add_points_color, -1)
         cv2.putText(
             img,
-            f"RPM={self.rotation_spd:05.2f} AVAIL={self.available}/{self.total} CNT={self.update_count}",
+            f"RPM={self.rotation_spd:05.2f} AVAIL={self.avail_points}/{self.total_points} CNT={self.update_count}",
             (10, 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.4,
@@ -387,7 +390,6 @@ class Map_Circle(object):
 
     def output_cloud(self, scale: float = 0.1, size=800) -> np.ndarray:
         black_img = np.zeros((size, size, 1), dtype=np.uint8)
-        center_point = np.array([size // 2, size // 2])
         points_pos = (
             np.array(
                 [
@@ -396,17 +398,16 @@ class Map_Circle(object):
                 ]
             )
             * scale
-        )
-        for n in range(360 * self.ACC):
-            pos = points_pos[:, n] + center_point
-            if self.data[n] != -1:
-                if 0 <= pos[0] < size and 0 <= pos[1] < size:
-                    black_img[int(pos[1]), int(pos[0])] = 255
+            + np.tile(np.array([size // 2, size // 2]), (360 * self.ACC, 1)).T
+        )[:, self.data != -1]
+        select_up = np.logical_and(points_pos[0] < size, points_pos[1] < size)
+        select_down = np.logical_and(points_pos[0] >= 0, points_pos[1] >= 0)
+        points_pos = points_pos[:, np.logical_and(select_up, select_down)]
+        black_img[points_pos[1].astype(np.int32), points_pos[0].astype(np.int32)] = 255
         return black_img
 
     def output_polyline_cloud(self, scale: float = 0.1, size=800, draw_outside=True) -> np.ndarray:
         black_img = np.zeros((size, size, 1), dtype=np.uint8)
-        center_point_arr = np.tile(np.array([size // 2, size // 2]), (360 * self.ACC, 1)).T
         points_pos = (
             np.array(
                 [
@@ -415,16 +416,14 @@ class Map_Circle(object):
                 ]
             )
             * scale
-            + center_point_arr
-        )
-        points = []
-        for n in range(360 * self.ACC):
-            if self.data[n] != -1:
-                pos = points_pos[:, n]
-                if draw_outside or (0 <= pos[0] < size and 0 <= pos[1] < size):
-                    points.append(pos.astype(np.int32))
-        if len(points) > 0:
-            cv2.polylines(black_img, [np.array(points)], False, 255, 1)
+            + np.tile(np.array([size // 2, size // 2]), (360 * self.ACC, 1)).T
+        )[:, self.data != -1]
+        if not draw_outside:
+            select_up = np.logical_and(points_pos[0] < size, points_pos[1] < size)
+            select_down = np.logical_and(points_pos[0] >= 0, points_pos[1] >= 0)
+            points_pos = points_pos[:, np.logical_and(select_up, select_down)]
+        if points_pos.size > 0:
+            cv2.polylines(black_img, [points_pos.T.astype(np.int32)], False, 255, 1)
         return black_img
 
     def get_distance(self, angle: float) -> int:
