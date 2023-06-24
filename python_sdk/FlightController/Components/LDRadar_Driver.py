@@ -269,7 +269,7 @@ class LD_Radar(object):
                 self.__radar_map_img_scale *= 0.9
             elif key == ord("a"):
                 t0 = time.perf_counter()
-                out = self.map.output_polyline_cloud(scale=self.__radar_map_img_scale, size=800)
+                out = self.map.output_polyline_cloud(scale=self.__radar_map_img_scale, size=800,draw_outside=False)
                 t1 = time.perf_counter()
                 print(f"output_polyline_cloud: {t1 - t0:.9f}s")
                 cv2.imshow("Cloud(polyline)", out)

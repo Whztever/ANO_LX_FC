@@ -358,7 +358,7 @@ class Map_Circle(object):
         point_size: int = 1,
         add_points: List[Point_2D] = [],
         add_points_color: tuple = (0, 255, 255),
-        add_points_size: int = 1,
+        add_points_size: int = 2,
     ):
         img_size = img.shape
         center_point = np.array([img_size[1] / 2, img_size[0] / 2])
@@ -439,7 +439,7 @@ class Map_Circle(object):
             if self.data[deg] == -1:
                 invalid_count += 1
                 continue
-            string += f"{deg:03d}° = {self.data[deg]} mm\n"
+            string += f"{deg / self.ACC:.2f}° = {self.data[deg]} mm\n"
         if invalid_count > 0:
             string += f"Hided {invalid_count:03d} invalid points\n"
         string += "--- End of Info ---"
