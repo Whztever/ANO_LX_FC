@@ -1,6 +1,5 @@
 import threading
 import time
-from re import I
 
 import cv2
 import numpy as np
@@ -13,19 +12,22 @@ from .LDRadar_Resolver import Map_Circle, Point_2D, Radar_Package, resolve_radar
 
 class LD_Radar(object):
     def __init__(self):
+        self.map = Map_Circle()
         self.running = False
         self._thread_list = []
         self._package = Radar_Package()
         self._serial = None
         self._update_callback = None
-        self._map_updated_event = threading.Event()
+        self.map_updated_event = threading.Event()
+        # 位姿估计
         self.rt_pose_update_event = threading.Event()
-        self._fp_flag = False
-        self._rtpose_flag = False
-        self.fp_points = []
         self.rt_pose = [0, 0, 0]
+        self._rtpose_flag = False
         self._rt_pose_inited = [False, False, False]
-        self.map = Map_Circle()
+        # 解析函数
+        self._map_funcs = []
+        self.map_func_update_times = []
+        self.map_func_results = []
 
     def start(self, com_port, radar_type: str = "LD08", update_callback=None):
         """
@@ -88,13 +90,11 @@ class LD_Radar(object):
                         reading_flag = False
                         resolve_radar_data(read_buffer, self._package)
                         self.map.update(self._package)
-                        self._map_updated_event.set()
+                        self.map_updated_event.set()
                         if self._update_callback != None:
                             self._update_callback()
                 else:
                     time.sleep(0.001)
-                if self._fp_flag:
-                    self._check_target_point()
             except Exception as e:
                 logger.error(f"[RADAR] Listenning thread error: {e}")
                 time.sleep(0.5)
@@ -102,13 +102,8 @@ class LD_Radar(object):
     def _map_resolve_task(self):
         while self.running:
             try:
-                if self._map_updated_event.wait(1):
-                    self._map_updated_event.clear()
-                    if self._fp_flag:
-                        if self._fp_type == 0:
-                            self._update_target_point(self.map.find_nearest(*self._fp_arg))
-                        elif self._fp_type == 1:
-                            self._update_target_point(self.map.find_nearest_with_ext_point_opt(*self._fp_arg))
+                if self.map_updated_event.wait(1):
+                    self.map_updated_event.clear()
                     if self._rtpose_flag:
                         img = self.map.output_cloud(
                             size=int(self._rtpose_size),
@@ -138,6 +133,13 @@ class LD_Radar(object):
                                 self.rt_pose[2] = yaw
                                 self._rt_pose_inited[2] = True
                         self.rt_pose_update_event.set()
+                    for i in range(len(self._map_funcs)):
+                        if self._map_funcs[i]:
+                            func, args, kwargs = self._map_funcs[i]
+                            result = func(self.map, *args, **kwargs)
+                            if result:
+                                self.map_func_results[i] = result
+                                self.map_func_update_times[i] = time.time()
                 else:
                     logger.warning("[RADAR] Map resolve thread wait timeout")
             except Exception as e:
@@ -165,10 +167,10 @@ class LD_Radar(object):
         cv2.namedWindow("Radar Map", cv2.WINDOW_AUTOSIZE)
         cv2.setMouseCallback(
             "Radar Map",
-            lambda *args, **kwargs: self._show_radar_map_on_mouse(*args, **kwargs),
+            lambda *args, **kwargs: self._radar_map_on_mouse(*args, **kwargs),
         )
 
-    def _show_radar_map_on_mouse(self, event, x, y, flags, param):
+    def _radar_map_on_mouse(self, event, x, y, flags, param):
         if event == cv2.EVENT_MOUSEWHEEL:
             if flags > 0:
                 self.__radar_map_img_scale *= 1.1
@@ -241,18 +243,19 @@ class LD_Radar(object):
                 (255, 255, 0),
             )
             point = self.map.get_point(self.__radar_map_info_angle)
-            xy = point.to_xy()
-            cv2.putText(
-                img_,
-                f"Position: ( {xy[0]:.2f} , {xy[1]:.2f} )",
-                (10, 580),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 0),
-            )
-            add_p = [point] + add_p
-            pos = point.to_cv_xy() * self.__radar_map_img_scale + np.array([300, 300])
-            cv2.line(img_, (300, 300), (int(pos[0]), int(pos[1])), (255, 255, 0), 1)
+            if point:
+                xy = point.to_xy()
+                cv2.putText(
+                    img_,
+                    f"Position: ( {xy[0]:.2f} , {xy[1]:.2f} )",
+                    (10, 580),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 0),
+                )
+                add_p = [point] + add_p
+                pos = point.to_cv_xy() * self.__radar_map_img_scale + np.array([300, 300])
+                cv2.line(img_, (300, 300), (int(pos[0]), int(pos[1])), (255, 255, 0), 1)
 
             self.map.draw_on_cv_image(img_, scale=self.__radar_map_img_scale, add_points=add_p)
             cv2.imshow("Radar Map", img_)
@@ -265,63 +268,47 @@ class LD_Radar(object):
             elif key == ord("s"):
                 self.__radar_map_img_scale *= 0.9
             elif key == ord("a"):
-                out = self.map.output_cloud()
-                cv2.imwrite(f"radar_map.png", out)
+                t0 = time.perf_counter()
+                out = self.map.output_polyline_cloud(scale=self.__radar_map_img_scale, size=800)
+                t1 = time.perf_counter()
+                print(f"output_polyline_cloud: {t1 - t0:.9f}s")
+                cv2.imshow("Cloud(polyline)", out)
+                t0 = time.perf_counter()
+                out = self.map.output_cloud(scale=self.__radar_map_img_scale, size=800)
+                t1 = time.perf_counter()
+                print(f"output_cloud: {t1 - t0:.9f}s")
                 cv2.imshow("Cloud", out)
+                # cv2.imwrite(f"radar_map.png", out)
 
-    def start_find_point(
-        self,
-        timeout: float,
-        type: int,
-        from_: int,
-        to_: int,
-        num: int,
-        range_limit: int,
-    ):
+    def register_map_func(self, func, *args, **kwargs) -> int:
         """
-        开始更新目标点
-        timeout: 超时时间, 超时后fp_timeout_flag被置位
-        type: 0:直接搜索 1:极值搜索
-        其余参数与find_nearest一致
-        """
-        self._fp_update_time = time.time()
-        self._fp_timeout = timeout
-        self.fp_timeout_flag = False
-        self.fp_points = []
-        self._fp_flag = True
-        self._fp_type = type
-        self._fp_arg = (from_, to_, num, range_limit)
+        注册雷达地图解析函数
 
-    def update_find_point_args(self, from_, to_, num, range_limit):
-        """
-        更新目标点查找参数
-        与find_nearest一致
-        """
-        self._fp_arg = (from_, to_, num, range_limit)
+        func应为self.map包含的方法,所有附加参数将会传递给该func
+        从列表map_func_results中获取结果,
+        列表map_func_update_times储存了上一次该函数返回非空结果的时间,用于超时判断
 
-    def stop_find_point(self):
+        return: func_id
         """
-        停止更新目标点
-        """
-        self._fp_flag = False
+        self._map_funcs.append((func, args, kwargs))
+        self.map_func_results.append(None)
+        self.map_func_update_times.append(0)
+        return len(self._map_funcs) - 1
 
-    def _update_target_point(self, points: list[Point_2D]):
+    def unregister_map_func(self, func_id: int):
         """
-        更新目标点位置
+        注销雷达地图解析函数
         """
-        if self.fp_timeout_flag and len(points) > 0:
-            self.fp_timeout_flag = False
-        elif len(points) > 0:
-            self.fp_points = points
-            self._fp_update_time = time.time()
+        self._map_funcs[func_id] = None
+        self.map_func_results[func_id] = None
+        self.map_func_update_times[func_id] = 0
 
-    def _check_target_point(self):
+    def update_map_func_args(self, func_id: int, *args, **kwargs):
         """
-        目标点超时判断
+        更新雷达地图解析函数参数
         """
-        if not self.fp_timeout_flag and time.time() - self._fp_update_time > self._fp_timeout:
-            self.fp_timeout_flag = True
-            logger.warning("[Radar] lost point!")
+        self._map_funcs[func_id][1] = args
+        self._map_funcs[func_id][2] = kwargs
 
     def start_resolve_pose(self, size: int = 1000, scale_ratio: float = 1, low_pass_ratio: float = 0.5):
         """
@@ -346,16 +333,16 @@ class LD_Radar(object):
         self._rt_pose_inited = [False, False, False]
         self.rt_pose_update_event.clear()
 
-    def update_resolve_pose_args(self, size: int = 1000, ratio: float = 1, low_pass_ratio: float = 0.5):
+    def update_resolve_pose_args(self, size=None, ratio=None, low_pass_ratio=None):
         """
-        更新参数
+        更新位姿参数
         size: 解算范围(长宽为size的正方形)
         scale_ratio: 降采样比例, 降低精度节省计算资源
         low_pass_ratio: 低通滤波比例
         """
-        self._rtpose_size = size
-        self._rtpose_scale_ratio = ratio
-        self._rtpose_low_pass_ratio = low_pass_ratio
+        self._rtpose_size = size if size is not None else self._rtpose_size
+        self._rtpose_scale_ratio = ratio if ratio is not None else self._rtpose_scale_ratio
+        self._rtpose_low_pass_ratio = low_pass_ratio if low_pass_ratio is not None else self._rtpose_low_pass_ratio
 
 
 if __name__ == "__main__":

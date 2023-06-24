@@ -6,35 +6,46 @@ import numpy as np
 from ..Components.LDRadar_Resolver import Point_2D
 
 ############参数设置##############
+# KERNAL_DI = 9  # 膨胀核大小
+# KERNAL_ER = 5  # 腐蚀核大小
+# HOUGH_THRESHOLD = 80
+# MIN_LINE_LENGTH = 60
 KERNAL_DI = 9  # 膨胀核大小
 KERNAL_ER = 5  # 腐蚀核大小
-HOUGH_THRESHOLD = 80
+HOUGH_THRESHOLD = 50
 MIN_LINE_LENGTH = 60
+MAX_LINE_GAP = 200
 #################################
 kernel_di = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNAL_DI, KERNAL_DI))
 kernel_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (KERNAL_ER, KERNAL_ER))
 
 
-def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+def radar_resolve_rt_pose(
+    img, debug=False, skip_di=False, skip_er=False
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """
     从雷达点云图像中解析出中点位置
     img: 雷达点云图像(灰度图)
-    _DEBUG: 显示解析结果
+    debug: 显示解析结果
+    skip_di: 是否跳过膨胀
+    skip_er: 是否跳过腐蚀
     return: 位姿(x,y,yaw)
     """
-    img = cv2.dilate(img, kernel_di)  # 膨胀
-    img = cv2.erode(img, kernel_er)  # 腐蚀
+    if not skip_di:
+        img = cv2.dilate(img, kernel_di)  # 膨胀
+    if not skip_er:
+        img = cv2.erode(img, kernel_er)  # 腐蚀
     lines = cv2.HoughLinesP(
         img,
         1,
         np.pi / 180,
         threshold=HOUGH_THRESHOLD,
         minLineLength=MIN_LINE_LENGTH,
-        maxLineGap=200,
+        maxLineGap=MAX_LINE_GAP,
     )
     size = img.shape
     x0, y0 = size[0] // 2, size[1] // 2
-    if _DEBUG:
+    if debug:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     x_out = None
     y_out = None
@@ -61,7 +72,7 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[
         if y_out is None or dis < y_out:  # 找最近的线
             y_out = dis
             yaw_out_1 = -yaw
-        if _DEBUG:
+        if debug:
             cv2.line(img, (x1, y1), (x2, y2), (255, 255, 0), 1)
     for line in back_lines:
         x1, y1, x2, y2 = line
@@ -69,7 +80,7 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[
         if x_out is None or dis < x_out:  # 找最近的线
             x_out = dis
             yaw_out_2 = -yaw
-        if _DEBUG:
+        if debug:
             cv2.line(img, (x1, y1), (x2, y2), (0, 255, 255), 1)
     if yaw_out_1 and yaw_out_2:
         yaw_out = (yaw_out_1 + yaw_out_2) / 2
@@ -79,7 +90,7 @@ def radar_resolve_rt_pose(img, _DEBUG=False) -> Tuple[Optional[float], Optional[
         yaw_out = yaw_out_2
     else:
         yaw_out = None
-    if _DEBUG:
+    if debug:
         x_ = x_out if x_out else -1
         y_ = y_out if y_out else -1
         yaw_ = yaw_out if yaw_out else 0

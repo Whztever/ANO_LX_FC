@@ -1,6 +1,6 @@
 import struct
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -28,6 +28,9 @@ class Point_2D(object):
 
     def __repr__(self):
         return self.__str__()
+
+    def __bool__(self):
+        return bool(self.distance >= 0)
 
     def to_xy(self) -> np.ndarray:
         """
@@ -184,6 +187,8 @@ class Map_Circle(object):
         self._cos_arr = np.cos(self._rad_arr)
         self.data = np.ones(360 * self.ACC, dtype=np.int64) * -1  # -1: 未知
         self.time_stamp = np.zeros(360 * self.ACC, dtype=np.float64)  # 时间戳
+        self.available = 0  # 有效点数
+        self.total = 360 * self.ACC  # 总点数
 
     def update(self, data: Radar_Package):
         """
@@ -214,6 +219,7 @@ class Map_Circle(object):
             self.data[self.time_stamp < time.time() - self.timeout_time] = -1
         self.rotation_spd = data.rotation_spd / 360
         self.update_count += 1
+        self.available = self.data[self.data != -1].size
 
     def in_deg(self, from_: float, to_: float) -> List[Point_2D]:
         """
@@ -371,7 +377,7 @@ class Map_Circle(object):
             cv2.circle(img, (int(pos[0]), int(pos[1])), add_points_size, add_points_color, -1)
         cv2.putText(
             img,
-            f"RPM={self.rotation_spd:.2f} CNT={self.update_count}",
+            f"RPM={self.rotation_spd:05.2f} AVAIL={self.available}/{self.total} CNT={self.update_count}",
             (10, 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.4,
@@ -396,6 +402,29 @@ class Map_Circle(object):
             if self.data[n] != -1:
                 if 0 <= pos[0] < size and 0 <= pos[1] < size:
                     black_img[int(pos[1]), int(pos[0])] = 255
+        return black_img
+
+    def output_polyline_cloud(self, scale: float = 0.1, size=800, draw_outside=True) -> np.ndarray:
+        black_img = np.zeros((size, size, 1), dtype=np.uint8)
+        center_point_arr = np.tile(np.array([size // 2, size // 2]), (360 * self.ACC, 1)).T
+        points_pos = (
+            np.array(
+                [
+                    self.data * self._sin_arr,
+                    -self.data * self._cos_arr,
+                ]
+            )
+            * scale
+            + center_point_arr
+        )
+        points = []
+        for n in range(360 * self.ACC):
+            if self.data[n] != -1:
+                pos = points_pos[:, n]
+                if draw_outside or (0 <= pos[0] < size and 0 <= pos[1] < size):
+                    points.append(pos.astype(np.int32))
+        if len(points) > 0:
+            cv2.polylines(black_img, [np.array(points)], False, 255, 1)
         return black_img
 
     def get_distance(self, angle: float) -> int:
