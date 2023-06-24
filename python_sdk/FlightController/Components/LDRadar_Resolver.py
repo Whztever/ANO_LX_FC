@@ -165,8 +165,8 @@ class Map_Circle(object):
     """
 
     ######### 映射方法 ########
-    ACC = 4  # 精度(总点数=360*ACC)
-    REMAP = 2  # 映射范围(越大精度越低, 但是残影越少,实际映射范围=+-UPDATE_MAP/ACC度)
+    ACC = 3  # 精度(总点数=360*ACC)
+    REMAP = 3  # 映射范围(越大精度越低, 但是残影越少,实际映射范围=+-UPDATE_MAP/ACC度)
     MODE_MIN = 0  # 在范围内选择最近的点更新
     MODE_MAX = 1  # 在范围内选择最远的点更新
     MODE_AVG = 2  # 计算平均值更新
@@ -195,34 +195,34 @@ class Map_Circle(object):
         """
         映射解析后的点云数据
         """
-        deg_values_dict: Dict[int, List[float]] = {}
+        deg_values_dict: Dict[Any, Any] = {}
         for point in data.points:
             if point.distance < self.distance_threshold or point.confidence < self.confidence_threshold:
                 continue
-            base = round(point.degree * self.ACC)
+            base = np.round(point.degree * self.ACC)
             if self.REMAP == 0:
-                degs = [base]  # 只映射实际角度
+                degs = np.array([base], dtype=int)  # 只映射实际角度
             else:
-                degs = [_ for _ in range(base - self.REMAP, base + self.REMAP + 1)]
+                degs = np.arange(base - self.REMAP, base + self.REMAP + 1, dtype=int)
+            degs %= 360 * self.ACC
             for deg in degs:
-                deg %= 360 * self.ACC
                 if deg not in deg_values_dict:
                     deg_values_dict[deg] = []
                 deg_values_dict[deg].append(point.distance)
         for deg, values in deg_values_dict.items():
             if self.update_mode == self.MODE_MIN:
-                self.data[deg] = min(values)
+                self.data[deg] = np.min(values)
             elif self.update_mode == self.MODE_MAX:
-                self.data[deg] = max(values)
+                self.data[deg] = np.max(values)
             elif self.update_mode == self.MODE_AVG:
-                self.data[deg] = round(sum(values) / len(values))
+                self.data[deg] = np.round(np.mean(values))
             if self.timeout_clear:
                 self.time_stamp[deg] = time.perf_counter()
         if self.timeout_clear:
             self.data[self.time_stamp < time.perf_counter() - self.timeout_time] = -1
         self.rotation_spd = data.rotation_spd / 360
         self.update_count += 1
-        self.avail_points = self.data[self.data != -1].size
+        self.avail_points = np.count_nonzero(self.data != -1)
 
     def in_deg(self, from_: float, to_: float) -> List[Point_2D]:
         """
@@ -256,28 +256,16 @@ class Map_Circle(object):
         view: numpy视图, 当指定时上述参数仅num生效
         """
         if view is None:
-            from_ %= 360
-            to_ %= 360
-            from_ = round(from_ * self.ACC)
-            to_ = round(to_ * self.ACC)
-            view = (self.data < range_limit) & (self.data != -1)
-            if from_ > to_:
-                view[to_ + 2 : from_] = False
-            else:
-                view[to_ + 2 : 360 * self.ACC] = False
-                view[:from_] = False
-        deg_arr = np.where(view)[0]
-        data_view = self.data[view]
-        p_num = len(deg_arr)
-        if p_num == 0:
+            view = (self.data < range_limit) & (self.data >= 0)
+            view &= (self._deg_arr >= from_) & (self._deg_arr <= to_)
+        indices = np.where(view)[0]
+        if len(indices) == 0:
             return []
-        elif p_num <= num:
-            sort_view = np.argsort(data_view)
+        elif len(indices) <= num:
+            sorted_indices = np.argsort(self.data[indices])
         else:
-            sort_view = np.argpartition(data_view, num)[:num]
-        points = []
-        for index in sort_view:
-            points.append(Point_2D(deg_arr[index] / self.ACC, data_view[index]))
+            sorted_indices = np.argpartition(self.data[indices], num)[:num]
+        points = [Point_2D(self._deg_arr[indices[i]], self.data[indices[i]]) for i in sorted_indices]
         return points
 
     def find_nearest_with_ext_point_opt(
@@ -290,16 +278,8 @@ class Map_Circle(object):
         num: 查找点的个数
         range_limit:  离限制
         """
-        from_ %= 360
-        to_ %= 360
-        from_ = round(from_ * self.ACC)
-        to_ = round(to_ * self.ACC)
         view = (self.data < range_limit) & (self.data != -1)
-        if from_ > to_:
-            view[to_ + 2 : from_] = False
-        else:
-            view[to_ + 2 : 360 * self.ACC] = False
-            view[:from_] = False
+        view &= (self._deg_arr >= from_) & (self._deg_arr <= to_)
         data_view = self.data[view]
         deg_arr = np.where(view)[0]
         peak = find_peaks(-data_view)[0]
@@ -326,29 +306,23 @@ class Map_Circle(object):
         distance: 给定的两点之间的距离
         range_limit: 距离限制
         threshold: 允许的距离误差
-        return: [Point_2D, Point_2D, 距离, 中心角度]
+        return: [Point_2D, Point_2D]
         """
-        from_ %= 360
-        to_ %= 360
-        from_ = round(from_ * self.ACC)
-        to_ = round(to_ * self.ACC)
         fd_points = self.find_nearest(from_, to_, 20, range_limit)
         num = len(fd_points)
-        get_list = []
-        if num >= 2:
-            for i in range(num):
-                for j in range(i + 1, num):
-                    vector = fd_points[i].to_xy() - fd_points[j].to_xy()
-                    delta_dis = np.sqrt(vector.dot(vector))
-                    if abs(delta_dis - distance) < threshold:
-                        deg = abs(fd_points[i].to_180_degree() + fd_points[j].to_180_degree()) / 2
-                        dis = (fd_points[i].distance + fd_points[j].distance) / 2
-                        get_list.append((fd_points[i], fd_points[j], dis, deg))
-            if len(get_list) > 0:
-                get_list.sort(key=lambda x: x[2])  # 按距离排序
-                get_list.sort(key=lambda x: x[3])  # 按角度排序
-                return list(get_list[0][:2])
-        return []
+        if num < 2:
+            return []
+        xy_points = np.array([p.to_xy() for p in fd_points])
+        delta_dis = np.sqrt(((xy_points[:, None] - xy_points) ** 2).sum(axis=-1))
+        mask = np.abs(delta_dis - distance) < threshold
+        np.fill_diagonal(mask, False)
+
+        indices = np.argwhere(mask)
+        if len(indices) == 0:
+            return []
+        p1 = fd_points[indices[0][0]]
+        p2 = fd_points[indices[0][1]]
+        return [p1, p2]
 
     def draw_on_cv_image(
         self,
@@ -390,38 +364,19 @@ class Map_Circle(object):
 
     def output_cloud(self, scale: float = 0.1, size=800) -> np.ndarray:
         black_img = np.zeros((size, size, 1), dtype=np.uint8)
-        points_pos = (
-            np.array(
-                [
-                    self.data * self._sin_arr,
-                    -self.data * self._cos_arr,
-                ]
-            )
-            * scale
-            + np.tile(np.array([size // 2, size // 2]), (360 * self.ACC, 1)).T
-        )[:, self.data != -1]
-        select_up = np.logical_and(points_pos[0] < size, points_pos[1] < size)
-        select_down = np.logical_and(points_pos[0] >= 0, points_pos[1] >= 0)
-        points_pos = points_pos[:, np.logical_and(select_up, select_down)]
-        black_img[points_pos[1].astype(np.int32), points_pos[0].astype(np.int32)] = 255
+        points_pos = np.array([self.data * self._sin_arr, -self.data * self._cos_arr]) * scale + size // 2
+        select = np.logical_and(points_pos >= 0, points_pos < size)
+        points_pos = points_pos[:, np.all(select, axis=0)]
+        black_img[points_pos[1].astype(int), points_pos[0].astype(int)] = 255
         return black_img
 
     def output_polyline_cloud(self, scale: float = 0.1, size=800, draw_outside=True) -> np.ndarray:
         black_img = np.zeros((size, size, 1), dtype=np.uint8)
-        points_pos = (
-            np.array(
-                [
-                    self.data * self._sin_arr,
-                    -self.data * self._cos_arr,
-                ]
-            )
-            * scale
-            + np.tile(np.array([size // 2, size // 2]), (360 * self.ACC, 1)).T
-        )[:, self.data != -1]
+        points_pos = np.array([self.data * self._sin_arr, -self.data * self._cos_arr]) * scale + size // 2
+        points_pos = points_pos[:, self.data != -1]
         if not draw_outside:
-            select_up = np.logical_and(points_pos[0] < size, points_pos[1] < size)
-            select_down = np.logical_and(points_pos[0] >= 0, points_pos[1] >= 0)
-            points_pos = points_pos[:, np.logical_and(select_up, select_down)]
+            select = np.logical_and(points_pos >= 0, points_pos < size)
+            points_pos = points_pos[:, np.all(select, axis=0)]
         if points_pos.size > 0:
             cv2.polylines(black_img, [points_pos.T.astype(np.int32)], False, 255, 1)
         return black_img
