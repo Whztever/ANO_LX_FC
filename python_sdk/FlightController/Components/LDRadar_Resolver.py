@@ -1,5 +1,6 @@
 import struct
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -25,9 +26,6 @@ class Point_2D(object):
         if self.confidence is not None:
             s += f", conf = {self.confidence:>3.0f}"
         return s
-
-    def __repr__(self):
-        return self.__str__()
 
     def __bool__(self):
         return bool(self.distance >= 0)
@@ -128,9 +126,6 @@ class Radar_Package(object):
         string += "--- End of Info ---"
         return string
 
-    def __repr__(self):
-        return self.__str__()
-
 
 _radar_unpack_fmt = "<HH" + "HB" * 12 + "HH"  # 雷达数据解析格式
 
@@ -166,15 +161,15 @@ class Map_Circle(object):
 
     ######### 映射方法 ########
     ACC = 3  # 精度(总点数=360*ACC)
-    REMAP = 3  # 映射范围(越大精度越低, 但是残影越少,实际映射范围=+-UPDATE_MAP/ACC度)
+    REMAP = 2  # 映射范围(越大精度越低, 但是残影越少,实际映射范围=+-UPDATE_MAP/ACC度)
     MODE_MIN = 0  # 在范围内选择最近的点更新
     MODE_MAX = 1  # 在范围内选择最远的点更新
     MODE_AVG = 2  # 计算平均值更新
     ######### 设置 #########
-    confidence_threshold = 140  # 置信度阈值
+    confidence_threshold = 40  # 置信度阈值
     distance_threshold = 10  # 距离阈值
     timeout_clear = True  # 超时清除
-    timeout_time = 0.5  # 超时时间 s
+    timeout_time = 0.4  # 超时时间 s
 
     def __init__(self):
         ######### 状态 #########
@@ -199,16 +194,19 @@ class Map_Circle(object):
         for point in data.points:
             if point.distance < self.distance_threshold or point.confidence < self.confidence_threshold:
                 continue
-            base = np.round(point.degree * self.ACC)
+            base = round(point.degree * self.ACC)
             if self.REMAP == 0:
-                degs = np.array([base], dtype=int)  # 只映射实际角度
+                base %= 360 * self.ACC
+                if base not in deg_values_dict:
+                    deg_values_dict[base] = []
+                deg_values_dict[base].append(point.distance)
             else:
                 degs = np.arange(base - self.REMAP, base + self.REMAP + 1, dtype=int)
-            degs %= 360 * self.ACC
-            for deg in degs:
-                if deg not in deg_values_dict:
-                    deg_values_dict[deg] = []
-                deg_values_dict[deg].append(point.distance)
+                degs %= 360 * self.ACC
+                for deg in degs:
+                    if deg not in deg_values_dict:
+                        deg_values_dict[deg] = []
+                    deg_values_dict[deg].append(point.distance)
         for deg, values in deg_values_dict.items():
             if self.update_mode == self.MODE_MIN:
                 self.data[deg] = np.min(values)
@@ -231,6 +229,12 @@ class Map_Circle(object):
         from_ = round(from_ * self.ACC)
         to_ = round(to_ * self.ACC)
         return [Point_2D(deg, self.data[deg]) for deg in range(from_, to_ + 1) if self.data[deg] != -1]
+
+    def __getitem__(self, item):
+        """
+        获取指定角度的距离
+        """
+        return self.data[round(item * self.ACC)]
 
     def clear(self):
         """
@@ -364,33 +368,29 @@ class Map_Circle(object):
         for point in add_points:
             pos = center_point + point.to_cv_xy() * scale
             cv2.circle(img, (int(pos[0]), int(pos[1])), add_points_size, add_points_color, -1)
-        cv2.putText(
-            img,
-            f"RPM={self.rotation_spd:05.2f} AVAIL={self.avail_points}/{self.total_points} CNT={self.update_count}",
-            (10, 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (255, 255, 255),
-        )
         return img
 
     def output_cloud(self, scale: float = 0.1, size=800) -> np.ndarray:
         black_img = np.zeros((size, size, 1), dtype=np.uint8)
-        points_pos = np.array([self.data * self._sin_arr, -self.data * self._cos_arr]) * scale + size // 2
+        select = self.data != -1
+        points_pos = np.array([self.data[select] * self._sin_arr[select], -self.data[select] * self._cos_arr[select]]) * scale + size // 2
         select = np.logical_and(points_pos >= 0, points_pos < size)
         points_pos = points_pos[:, np.all(select, axis=0)]
         black_img[points_pos[1].astype(int), points_pos[0].astype(int)] = 255
         return black_img
 
-    def output_polyline_cloud(self, scale: float = 0.1, size=800, draw_outside=True) -> np.ndarray:
+    def output_polyline_cloud(
+        self, scale: float = 0.1, size=800, thickness=1, draw_outside=True, boundary=None
+    ) -> np.ndarray:
         black_img = np.zeros((size, size, 1), dtype=np.uint8)
-        points_pos = np.array([self.data * self._sin_arr, -self.data * self._cos_arr]) * scale + size // 2
-        points_pos = points_pos[:, self.data != -1]
+        select = self.data != -1
+        if boundary is not None:
+            select = np.logical_and(select, self.data < boundary)
+        points_pos = np.array([self.data[select] * self._sin_arr[select], -self.data[select] * self._cos_arr[select]]) * scale + size // 2
         if not draw_outside:
-            select = np.logical_and(points_pos >= 0, points_pos < size)
-            points_pos = points_pos[:, np.all(select, axis=0)]
+            points_pos = points_pos[:, np.all(np.logical_and(points_pos >= 0, points_pos < size), axis=0)]
         if points_pos.size > 0:
-            cv2.polylines(black_img, [points_pos.T.astype(np.int32)], False, 255, 1)
+            cv2.polylines(black_img, [points_pos.T.astype(np.int32)], True, 255, thickness)
         return black_img
 
     def get_distance(self, angle: float) -> int:

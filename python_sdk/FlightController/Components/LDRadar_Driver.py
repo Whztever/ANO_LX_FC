@@ -1,5 +1,6 @@
 import threading
 import time
+import traceback
 
 import cv2
 import numpy as np
@@ -18,7 +19,8 @@ class LD_Radar(object):
         self._package = Radar_Package()
         self._serial = None
         self._update_callback = None
-        self.map_updated_event = threading.Event()
+        self.subtask_event = threading.Event()
+        self.subtask_skip = 4
         # 位姿估计
         self.rt_pose_update_event = threading.Event()
         self.rt_pose = [0, 0, 0]
@@ -29,11 +31,12 @@ class LD_Radar(object):
         self.map_func_update_times = []
         self.map_func_results = []
 
-    def start(self, com_port, radar_type: str = "LD08", update_callback=None):
+    def start(self, com_port, radar_type: str = "LD08", update_callback=None, subtask_skip=4):
         """
         开始监听雷达数据
         radar_type: LD08 or LD06
-        update_callback: 回调函数，每次更新雷达数据时调用
+        update_callback: 回调函数, 次更新雷达数据时调用
+        subtask_skip: 多少次雷达数据更新后, 进行一次子任务
         """
         if self.running:
             self.stop()
@@ -45,6 +48,8 @@ class LD_Radar(object):
             raise ValueError("Unknown radar type")
         self._serial = serial.Serial(com_port, baudrate=baudrate)
         self._update_callback = update_callback
+        self.subtask_event.clear()
+        self.subtask_skip = subtask_skip
         self.running = True
         thread = threading.Thread(target=self._read_serial_task)
         thread.daemon = True
@@ -56,6 +61,7 @@ class LD_Radar(object):
         thread.start()
         self._thread_list.append(thread)
         logger.info("[RADAR] Map resolve thread started")
+        self.start_time = time.perf_counter()
 
     def stop(self, joined=False):
         """
@@ -75,6 +81,7 @@ class LD_Radar(object):
         package_length = 45
         read_buffer = bytes()
         wait_buffer = bytes()
+        count = 0
         while self.running:
             try:
                 if self._serial.in_waiting > 0:
@@ -90,20 +97,23 @@ class LD_Radar(object):
                         reading_flag = False
                         resolve_radar_data(read_buffer, self._package)
                         self.map.update(self._package)
-                        self.map_updated_event.set()
-                        if self._update_callback != None:
-                            self._update_callback()
+                        if self._update_callback is not None:
+                            self._update_callback(self._package)
+                        count += 1
+                        if count >= self.subtask_skip:
+                            count = 0
+                            self.subtask_event.set()
                 else:
                     time.sleep(0.001)
             except Exception as e:
-                logger.error(f"[RADAR] Listenning thread error: {e}")
+                logger.error(f"[RADAR] Listenning thread error: {traceback.format_exc()}")
                 time.sleep(0.5)
 
     def _map_resolve_task(self):
         while self.running:
             try:
-                if self.map_updated_event.wait(1):
-                    self.map_updated_event.clear()
+                if self.subtask_event.wait(1):
+                    self.subtask_event.clear()
                     if self._rtpose_flag:
                         img = self.map.output_cloud(
                             size=int(self._rtpose_size),
@@ -258,6 +268,22 @@ class LD_Radar(object):
                 cv2.line(img_, (300, 300), (int(pos[0]), int(pos[1])), (255, 255, 0), 1)
 
             self.map.draw_on_cv_image(img_, scale=self.__radar_map_img_scale, add_points=add_p)
+            cv2.putText(
+                img_,
+                f"RPM={self.map.rotation_spd:05.2f} PPS={self.map.update_count/(time.perf_counter()-self.start_time):05.2f}",
+                (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (255, 255, 255),
+            )
+            cv2.putText(
+                img_,
+                f"AVAIL={self.map.avail_points}/{self.map.total_points} CNT={self.map.update_count} ",
+                (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                (255, 255, 255),
+            )
             cv2.imshow("Radar Map", img_)
             key = cv2.waitKey(int(1000 / 50))
             if key == ord("q"):
@@ -269,7 +295,7 @@ class LD_Radar(object):
                 self.__radar_map_img_scale *= 0.9
             elif key == ord("a"):
                 t0 = time.perf_counter()
-                out = self.map.output_polyline_cloud(scale=self.__radar_map_img_scale, size=800,draw_outside=False)
+                out = self.map.output_polyline_cloud(scale=self.__radar_map_img_scale, size=800, draw_outside=False)
                 t1 = time.perf_counter()
                 print(f"output_polyline_cloud: {t1 - t0:.9f}s")
                 cv2.imshow("Cloud(polyline)", out)
