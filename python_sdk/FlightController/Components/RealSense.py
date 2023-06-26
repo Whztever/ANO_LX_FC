@@ -1,5 +1,6 @@
 import datetime
 import math
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Tuple
@@ -79,7 +80,7 @@ class T265(object):
     """
 
     def __init__(
-        self, log_to_file: bool = False, log_to_console: bool = False, log_level: str = "info", **args
+        self, log_to_file: bool = False, log_to_console: bool = False, event_skip=0, log_level: str = "info", **args
     ) -> None:
         """
         初始化 T265
@@ -88,6 +89,8 @@ class T265(object):
         self.frame_num: int = 0  # frame number
         self.frame_timestamp: float = 0.0  # timestamp
         self.running = False
+        self.update_event = threading.Event()
+        self._event_skip = event_skip
         if log_to_file:
             rs.log_to_file(getattr(rs.log_severity, log_level), "rs_t265.log")
         if log_to_console:
@@ -130,6 +133,8 @@ class T265(object):
         if self._callbacks:
             for callback in self._callbacks:
                 callback(self.pose, self.frame_num, self.frame_timestamp)
+        if self._event_skip == 0 or self._update_count % self._event_skip == 0:
+            self.update_event.set()
 
     def print_pose(self, refresh=True) -> None:
         BACK = "\033[F"
@@ -188,6 +193,8 @@ class T265(object):
         if self._callbacks:
             for callback in self._callbacks:
                 callback(self.pose, self.frame_num, self.frame_timestamp)
+        if self._event_skip == 0 or self._update_count % self._event_skip == 0:
+            self.update_event.set()
 
     def register_callback(self, callback: Callable[[T265_Pose_Frame, int, float], None]) -> None:
         """
@@ -287,6 +294,7 @@ class T265(object):
     def eular_rotation(self) -> Tuple[float, float, float]:
         """
         获取欧拉角姿态
+        返回值: roll, pitch, yaw
         """
         # in convert matrices: roll (x), pitch (y), yaw (z)
         # so we swap axis: x, y, z = r_z, r_x, r_y

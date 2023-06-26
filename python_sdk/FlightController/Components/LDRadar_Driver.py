@@ -115,11 +115,18 @@ class LD_Radar(object):
                 if self.subtask_event.wait(1):
                     self.subtask_event.clear()
                     if self._rtpose_flag:
-                        img = self.map.output_cloud(
+                        # img = self.map.output_cloud(
+                        #     size=int(self._rtpose_size),
+                        #     scale=0.1 * self._rtpose_scale_ratio,
+                        # )
+                        # x, y, yaw = radar_resolve_rt_pose(img)
+                        img = radar.map.output_polyline_cloud(
                             size=int(self._rtpose_size),
                             scale=0.1 * self._rtpose_scale_ratio,
+                            thickness=1,
+                            draw_outside=False,
                         )
-                        x, y, yaw = radar_resolve_rt_pose(img)
+                        x, y, yaw = radar_resolve_rt_pose(img, skip_er=True, skip_di=True)
                         if x is not None:
                             if self._rt_pose_inited[0]:
                                 self.rt_pose[0] += (

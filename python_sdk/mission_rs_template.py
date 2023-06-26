@@ -6,10 +6,12 @@ from time import sleep, time
 from typing import List
 
 import cv2
+from matplotlib.style import available
 import numpy as np
 from configManager import ConfigManager
 from FlightController import FC_Client, FC_Controller
 from FlightController.Components import LD_Radar, Map_Circle, Point_2D
+from FlightController.Components.RealSense import T265
 from FlightController.Solutions.Vision import (
     change_cam_resolution,
     set_cam_autowb,
@@ -52,11 +54,12 @@ logger.info(f"[MISSION] Loaded target points: {target_points}")
 
 
 class Mission(object):
-    def __init__(self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture, hmi: HMI):
+    def __init__(self, fc: FC_Controller, radar: LD_Radar, camera: cv2.VideoCapture, hmi: HMI, rs: T265):
         self.fc = fc
         self.radar = radar
         self.cam = camera
         self.hmi = hmi
+        self.rs = rs
         self.inital_yaw = self.fc.state.yaw.value
         self.fd = FastestDetOnnx(drawOutput=True)  # 初始化神经网络
         ############### PID #################
@@ -214,7 +217,7 @@ class Mission(object):
     def keep_height_task(self):
         paused = False
         while self.running:
-            sleep(1 / 10)  # 飞控参数以20Hz回传
+            sleep(1 / 12)  # 飞控参数以20Hz回传
             if self.keep_height_flag and self.fc.state.mode.value == self.fc.HOLD_POS_MODE:
                 if paused:
                     paused = False
@@ -253,27 +256,23 @@ class Mission(object):
                     )
                     logger.info("[MISSION] Resolve pose started")
                     sleep(0.01)
-                if self.radar.rt_pose_update_event.wait(1):  # 等待地图更新
-                    self.radar.rt_pose_update_event.clear()
-                    current_x = self.radar.rt_pose[0]
-                    current_y = self.radar.rt_pose[1]
-                    if current_x > 0 and current_y > 0:
+                if self.rs.update_event.wait(1):  # 等待地图更新
+                    self.rs.update_event.clear()
+                    current_x = -self.rs.pose.translation.z
+                    current_y = -self.rs.pose.translation.x
+                    current_yaw = self.rs.eular_rotation[2]
+                    available = self.rs.pose.tracker_confidence == 3
+                    if available:
                         self.fc.send_general_position(x=current_x, y=current_y)
-                    current_yaw = self.radar.rt_pose[2]
-                    out_x = None
-                    out_y = None
-                    out_yaw = None
-                    if current_x > 0:  # 0 为无效值
                         out_x = int(self.navi_x_pid(current_x))
                         if out_x is not None:
                             self.fc.update_realtime_control(vel_x=out_x)
-                    if current_y > 0:
                         out_y = int(self.navi_y_pid(current_y))
                         if out_y is not None:
                             self.fc.update_realtime_control(vel_y=out_y)
-                    out_yaw = int(self.navi_yaw_pid(current_yaw))
-                    if out_yaw is not None:
-                        self.fc.update_realtime_control(yaw=out_yaw)
+                        out_yaw = int(self.navi_yaw_pid(current_yaw))
+                        if out_yaw is not None:
+                            self.fc.update_realtime_control(yaw=out_yaw)
                     if False:  # debug
                         logger.debug(
                             f"[MISSION] Current pose: {current_x}, {current_y}, {current_yaw}; Output: {out_x}, {out_y}, {out_yaw}"

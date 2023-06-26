@@ -1,21 +1,14 @@
 import os
 import sys
-
-####### 清理日志 #######
-# path = os.path.dirname(os.path.abspath(__file__))
-# log_path = os.path.join(path, "fc_log.log")
-# try:
-#     os.remove(log_path)
-# except:
-#     pass
-####################
 from time import sleep, time
+from typing import Any
 
 import cv2
 import numpy as np
 from configManager import ConfigManager
 from FlightController import FC_Client, FC_Controller
 from FlightController.Components import LD_Radar, Map_Circle, Point_2D
+from FlightController.Components.RealSense import T265
 from hmi import HMI
 from loguru import logger
 
@@ -33,7 +26,7 @@ try:
 except:
     logger.warning("[MANAGER] Manager Connecting Failed, Switching to Local Mode")
     try:
-        fc = FC_Controller()
+        fc = FC_Controller()  # type: ignore
         fc.start_listen_serial("/dev/serial0", print_state=False)
         fc.wait_for_connection(5)
     except:
@@ -63,6 +56,22 @@ except:
         if fc.event.key_short.is_set():
             fc.quit()
             self_reboot()
+
+try:
+    rs = T265()
+    rs.hardware_reset()
+    rs.start(print_update=False)
+except:
+    logger.warning("[MANAGER] RealSense(T265) Connecting Failed")
+    while True:
+        fc.set_rgb_led(0, 255, 255)
+        sleep(0.5)
+        fc.set_rgb_led(0, 0, 0)
+        sleep(0.5)
+        if fc.event.key_short.is_set():
+            fc.quit()
+            self_reboot()
+
 try:
     cam = cv2.VideoCapture(0)
     if not cam.isOpened():
@@ -217,23 +226,23 @@ if not _testing:
 logger.info(f"[MANAGER] Target Mission: {target_mission}")
 fc.set_action_log(True)
 hmi.info(f"任务 {target_mission} 启动")
-mission = None
+mission_func: Any = None
 try:
     if target_mission == 1:
-        from mission1 import Mission
+        from mission1 import Mission  # type: ignore
 
-        mission = Mission(fc, radar, cam, hmi)
+        mission_func = Mission(fc, radar, cam, hmi)
     elif target_mission == 2:
-        from mission2 import Mission
+        from mission2 import Mission  # type: ignore
 
-        mission = Mission(fc, radar, cam, hmi)
+        missmission_funcion = Mission(fc, radar, cam, hmi)
     elif target_mission == 3:
-        from mission3 import Mission
+        from mission3 import Mission  # type: ignore
 
-        mission = Mission(fc, radar, cam, hmi)
+        mission_func = Mission(fc, radar, cam, hmi)
     logger.info("[MANAGER] Calling Mission")
 
-    mission.run()
+    mission_func.run()
 
     logger.info("[MANAGER] Mission Finished")
 except Exception as e:
@@ -241,8 +250,8 @@ except Exception as e:
 
     logger.error(f"[MANAGER] Mission Failed: {traceback.format_exc()}")
 finally:
-    if mission is not None:
-        mission.stop()
+    if mission_func is not None:
+        mission_func.stop()
     if fc.state.unlock.value:
         logger.warning("[MANAGER] Auto Landing")
         fc.set_flight_mode(fc.PROGRAM_MODE)
