@@ -5,7 +5,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
-import pyrealsense2 as rs
+try:
+    import pyrealsense2 as rs
+    rs.config()
+except:
+    import pyrealsense2.pyrealsense2 as rs # for linux
+
 from loguru import logger
 
 
