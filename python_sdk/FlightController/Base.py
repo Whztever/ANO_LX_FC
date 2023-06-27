@@ -78,6 +78,7 @@ class Byte_Var:
 
     def update_value_with_mul(self, value):
         self._value = self._var_type(value * self._multiplier)
+        self._last_update_time = time.perf_counter()
 
     @property
     def bytes(self):
