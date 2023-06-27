@@ -85,15 +85,15 @@ def radar_resolve_rt_pose(
 
     if right_lines.shape[0] != 0:
         dists, angles = get_point_line_distance_np([x0, y0], right_lines)
-        # line_index = np.argmin(dists)  # 选取距离最近的直线
-        line_index = np.argmin(np.abs(angles))  # 选取角度最小的直线
+        line_index = np.argmin(dists)  # 选取距离最近的直线
+        # line_index = np.argmin(np.abs(angles))  # 选取角度最小的直线
         y_out = dists[line_index]
         yaw_out_1 = -angles[line_index]
 
     if back_lines.shape[0] != 0:
         dists, angles = get_point_line_distance_np([x0, y0], back_lines)
-        # line_index = np.argmin(dists)
-        line_index = np.argmin(np.abs(angles - 90))
+        line_index = np.argmin(dists)
+        # line_index = np.argmin(np.abs(angles - 90))
         x_out = dists[line_index]
         yaw_out_2 = -angles[line_index] + 90
 
