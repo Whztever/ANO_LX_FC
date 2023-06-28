@@ -120,7 +120,7 @@ class LD_Radar(object):
                         #     scale=0.1 * self._rtpose_scale_ratio,
                         # )
                         # x, y, yaw = radar_resolve_rt_pose(img)
-                        img = radar.map.output_polyline_cloud(
+                        img = self.map.output_polyline_cloud(
                             size=int(self._rtpose_size),
                             scale=0.1 * self._rtpose_scale_ratio,
                             thickness=1,

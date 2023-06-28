@@ -137,6 +137,7 @@ class T265(object):
         self._connect(**args)
         self._connect_args = args
         self._callbacks: list[Callable] = []
+        self.secondary_frame_established = False
 
     def _connect(self, **args) -> None:
         self._pipe = rs.pipeline()
@@ -187,6 +188,15 @@ class T265(object):
             f"Roll/Pitch/Yaw :{r:11.6f},{p:11.6f},{y:11.6f};\n"
             f"Tracker conf: {self.pose.tracker_confidence}, Mapper conf: {self.pose.mapper_confidence}"
         )
+        if self.secondary_frame_established:
+            position, rotation, eular = self.get_pose_in_secondary_frame()
+            text += (
+                f"\n2nd Translation   : {position[0]:11.6f},{position[1]:11.6f},{position[2]:11.6f};\n"
+                f"2nd Rotation      : {rotation[0]:11.6f},{rotation[1]:11.6f},{rotation[2]:11.6f},{rotation[3]:11.6f};\n"
+                f"2nd Roll/Pitch/Yaw: {eular[0]:11.6f},{eular[1]:11.6f},{eular[2]:11.6f}"
+            )
+            if refresh:
+                text += BACK * 3
         if refresh:
             print(f"{text}{BACK* 8}", end="")
 
@@ -294,13 +304,21 @@ class T265(object):
             [self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w]
         ).as_euler("zxy", degrees=True)
 
-    def establish_secondary_origin(self):
+    def establish_secondary_origin(
+        self, force_level: bool = True, x_offset: float = 0, y_offset: float = 0, z_offset: float = 0
+    ):
         """
         以当前位置和姿态建立副坐标系原点
+        force_level: 强制副坐标系为水平面
         """
         # 获取当前位置和朝向
-        position = np.array([self.pose.translation.x, self.pose.translation.y, self.pose.translation.z])
+        position = np.array(
+            [self.pose.translation.x + x_offset, self.pose.translation.y + y_offset, self.pose.translation.z + z_offset]
+        )
         orientation = np.array([self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w])
+        if force_level:
+            orientation[0] = 0
+            orientation[2] = 0
 
         # 将当前位置和朝向作为副坐标系的原点和朝向
         # rotation_matrix = quaternions_to_rotation_matrix(*orientation)
@@ -309,18 +327,21 @@ class T265(object):
         self._secondary_rotation = Rotation.from_quat(orientation)  # xyzw
         self._secondary_rotation_matrix = self._secondary_rotation.as_matrix()
         logger.debug(f"[T265] Secondary origin established: {self._secondary_position}, {self._secondary_orientation}")
+        self.secondary_frame_established = True
 
     def get_pose_in_secondary_frame(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         获取当前位置和姿态在副坐标系中的表示
         return: xyz位置, xyzw四元数, rpy欧拉角
         """
+        if not self.secondary_frame_established:
+            raise RuntimeError("Secondary frame not established")
         # 获取当前位置和朝向
         position = np.array([self.pose.translation.x, self.pose.translation.y, self.pose.translation.z])
         orientation = np.array([self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w])
 
         # 将当前位置和朝向转换到副坐标系中
-        position -= self._secondary_positionz
+        position -= self._secondary_position
         # 反向应用副坐标系的旋转矩阵
         position = np.dot(position, self._secondary_rotation_matrix.T)
         # 反向应用副坐标系的朝向
@@ -334,13 +355,15 @@ class T265(object):
 
 if __name__ == "__main__":
     t265 = T265()
-    t265.hardware_reset()
+    # t265.hardware_reset()
     t265.start(print_update=True)
     try:
-        time.sleep(5)
-        t265.establish_secondary_origin()
         while True:
-            time.sleep(1)
-            print(f"secondary pose: {t265.get_pose_in_secondary_frame()}")
+            time.sleep(0.1)
+            get = input(">>> \n")
+            if get == "e":
+                t265.establish_secondary_origin()
+            elif get == "g":
+                print(f"pose: {t265.get_pose_in_secondary_frame()}" + " " * 60)
     finally:
         t265.stop()
