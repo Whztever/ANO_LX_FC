@@ -5,16 +5,20 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
+import numpy as np
+from scipy.spatial.transform import Rotation
+
 try:
     import pyrealsense2 as rs
+
     rs.config()
 except:
-    import pyrealsense2.pyrealsense2 as rs # for linux
+    import pyrealsense2.pyrealsense2 as rs  # for linux
 
 from loguru import logger
 
 
-def quaternions_to_euler(w, x, y, z):
+def quaternions_to_euler(x, y, z, w):
     # mathod 1
     # r = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
     # p = math.asin(2 * (w * y - z * x))
@@ -35,6 +39,36 @@ def quaternions_to_euler(w, x, y, z):
     # convert radians to degrees
     r, p, y = math.degrees(r), math.degrees(p), math.degrees(y)
     return r, p, y
+
+
+def quaternions_to_rotation_matrix(x, y, z, w) -> np.ndarray:
+    """
+    将wxyz的四元数转换为3x3的旋转矩阵
+    """
+    # 构造旋转矩阵
+    rotation_matrix = np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+    return rotation_matrix
+
+
+def rotation_matrix_to_quaternions(rotation_matrix: np.ndarray) -> tuple:
+    """
+    将3x3的旋转矩阵转换为wxyz的四元数
+    """
+    # 计算四元数的w分量
+    w = np.sqrt(1 + rotation_matrix[0, 0] + rotation_matrix[1, 1] + rotation_matrix[2, 2]) / 2
+    # 计算四元数的x, y, z分量
+    x = (rotation_matrix[2, 1] - rotation_matrix[1, 2]) / (4 * w)
+    y = (rotation_matrix[0, 2] - rotation_matrix[2, 0]) / (4 * w)
+    z = (rotation_matrix[1, 0] - rotation_matrix[0, 1]) / (4 * w)
+
+    return x, y, z, w
 
 
 @dataclass
@@ -102,8 +136,6 @@ class T265(object):
             rs.log_to_console(getattr(rs.log_severity, log_level))
         self._connect(**args)
         self._connect_args = args
-        self._cali_pos_offset = [0.0, 0.0, 0.0]
-        self._cali_eular_offset = [0.0, 0.0, 0.0]
         self._callbacks: list[Callable] = []
 
     def _connect(self, **args) -> None:
@@ -111,19 +143,19 @@ class T265(object):
         self._cfg = rs.config()
         self._cfg.enable_stream(rs.stream.pose)
         self._device = self._cfg.resolve(self._pipe).get_device()
-        logger.info(f"Connected to {self._device}")
-        logger.debug(f"Device sensors: {self._device.query_sensors()}")
+        logger.info(f"[T265] Connected to {self._device}")
+        logger.debug(f"[T265] Device sensors: {self._device.query_sensors()}")
         pose_sensor = self._device.first_pose_sensor()
-        logger.debug(f"Pose sensor: {pose_sensor}")
+        logger.debug(f"[T265] Pose sensor: {pose_sensor}")
         pose_sensor.set_option(rs.option.enable_auto_exposure, args.get("enable_auto_exposure", 1))
         pose_sensor.set_option(rs.option.enable_mapping, args.get("enable_mapping", 1))
         pose_sensor.set_option(rs.option.enable_map_preservation, args.get("enable_map_preservation", 1))
         pose_sensor.set_option(rs.option.enable_relocalization, args.get("enable_relocalization", 1))
         pose_sensor.set_option(rs.option.enable_pose_jumping, args.get("enable_pose_jumping", 1))
         pose_sensor.set_option(rs.option.enable_dynamic_calibration, args.get("enable_dynamic_calibration", 1))
-        logger.debug(f"Pose sensor options:")
+        logger.debug(f"[T265] Pose sensor options:")
         for opt in pose_sensor.get_supported_options():
-            logger.debug(f"  {opt}: {pose_sensor.get_option(opt)}")
+            logger.debug(f"[T265]   {opt}: {pose_sensor.get_option(opt)}")
 
     def _callback(self, frame) -> None:
         pose = frame.as_pose_frame()
@@ -133,7 +165,7 @@ class T265(object):
         self.frame_timestamp = pose.timestamp
         self.pose = pose.get_pose_data()
         if self._print_update:
-            self.print_pose()
+            self._print_pose()
         self._update_count += 1
         if self._callbacks:
             for callback in self._callbacks:
@@ -141,7 +173,7 @@ class T265(object):
         if self._event_skip == 0 or self._update_count % self._event_skip == 0:
             self.update_event.set()
 
-    def print_pose(self, refresh=True) -> None:
+    def _print_pose(self, refresh=True) -> None:
         BACK = "\033[F"
         r, p, y = self.eular_rotation
         text = (
@@ -175,7 +207,7 @@ class T265(object):
         self._update_count = 0
         self._start_time = time.perf_counter()
         self.running = True
-        logger.info("T265 started")
+        logger.info("[T265] Started")
 
     def update(self):
         """
@@ -193,7 +225,7 @@ class T265(object):
         self.frame_timestamp = pose.timestamp
         self.pose = pose.get_pose_data()
         if self._print_update:
-            self.print_pose()
+            self._print_pose()
         self._update_count += 1
         if self._callbacks:
             for callback in self._callbacks:
@@ -214,7 +246,7 @@ class T265(object):
         """
         self._pipe.stop()
         self.running = False
-        logger.info("T265 stopped")
+        logger.info("[T265] Stopped")
 
     @property
     def fps(self) -> float:
@@ -231,7 +263,7 @@ class T265(object):
         强制重置 T265 并重新连接
         """
         self._device.hardware_reset()
-        logger.warning("T265 hardware reset, waiting for reconnection...")
+        logger.warning("[T265] Hardware reset, waiting for reconnection...")
         while True:
             try:
                 self._connect(**self._connect_args)
@@ -246,55 +278,6 @@ class T265(object):
             self._update_count = 0
             self._start_time = time.perf_counter()
 
-    def calibrate_pos(self, x: float = 0, y: float = 0, z: float = 0) -> None:
-        """
-        软件计算位移偏移值
-        x, y, z: 实际位置
-        """
-        self._cali_pos_offset = [x - self.pose.translation.x, y - self.pose.translation.y, z - self.pose.translation.z]
-        logger.info(f"Calibration offset: {self._cali_pos_offset}")
-
-    @property
-    def calibrated_pos(self) -> Tuple[float, float, float]:
-        """
-        获取校准后的位置
-        """
-        return (
-            self.pose.translation.x + self._cali_pos_offset[0],
-            self.pose.translation.y + self._cali_pos_offset[1],
-            self.pose.translation.z + self._cali_pos_offset[2],
-        )
-
-    def calibrate_eular(self, r: float = 0, p: float = 0, y: float = 0) -> None:
-        """
-        软件计算欧拉角偏移值
-        r, p, y: 实际欧拉角
-        """
-        tr, tp, ty = self.eular_rotation
-        self._cali_eular_offset = [r - tr, p - tp, y - ty]
-        logger.info(f"Calibration offset: {self._cali_eular_offset}")
-
-    @property
-    def calibrated_eular(self) -> Tuple[float, float, float]:
-        """
-        获取校准后的欧拉角
-        """
-
-        def recomp(e, size) -> float:
-            if e > size:
-                return e - 2 * size
-            elif e < -size:
-                return e + 2 * size
-            else:
-                return e
-
-        tr, tp, ty = self.eular_rotation
-        return (
-            recomp(tr + self._cali_eular_offset[0], 180),
-            recomp(tp + self._cali_eular_offset[1], 90),
-            recomp(ty + self._cali_eular_offset[2], 180),
-        )
-
     @property
     def eular_rotation(self) -> Tuple[float, float, float]:
         """
@@ -303,9 +286,50 @@ class T265(object):
         """
         # in convert matrices: roll (x), pitch (y), yaw (z)
         # so we swap axis: x, y, z = r_z, r_x, r_y
-        return quaternions_to_euler(
-            self.pose.rotation.w, self.pose.rotation.z, self.pose.rotation.x, self.pose.rotation.y
-        )
+        # return quaternions_to_euler(
+        #     self.pose.rotation.z, self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.w
+        # )
+
+        return Rotation.from_quat(
+            [self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w]
+        ).as_euler("zxy", degrees=True)
+
+    def establish_secondary_origin(self):
+        """
+        以当前位置和姿态建立副坐标系原点
+        """
+        # 获取当前位置和朝向
+        position = np.array([self.pose.translation.x, self.pose.translation.y, self.pose.translation.z])
+        orientation = np.array([self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w])
+
+        # 将当前位置和朝向作为副坐标系的原点和朝向
+        # rotation_matrix = quaternions_to_rotation_matrix(*orientation)
+        self._secondary_position = position
+        self._secondary_orientation = orientation
+        self._secondary_rotation = Rotation.from_quat(orientation)  # xyzw
+        self._secondary_rotation_matrix = self._secondary_rotation.as_matrix()
+        logger.debug(f"[T265] Secondary origin established: {self._secondary_position}, {self._secondary_orientation}")
+
+    def get_pose_in_secondary_frame(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        获取当前位置和姿态在副坐标系中的表示
+        return: xyz位置, xyzw四元数, rpy欧拉角
+        """
+        # 获取当前位置和朝向
+        position = np.array([self.pose.translation.x, self.pose.translation.y, self.pose.translation.z])
+        orientation = np.array([self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w])
+
+        # 将当前位置和朝向转换到副坐标系中
+        position -= self._secondary_positionz
+        # 反向应用副坐标系的旋转矩阵
+        position = np.dot(position, self._secondary_rotation_matrix.T)
+        # 反向应用副坐标系的朝向
+        # rotation_matrix = quaternions_to_rotation_matrix(*orientation)
+        # rotation_matrix = np.dot(rotation_matrix, self._secondary_rotation_matrix.T)
+        # orientation = rotation_matrix_to_quaternions(rotation_matrix)
+        rotation = Rotation.from_quat(orientation) * self._secondary_rotation.inv()
+
+        return position, rotation.as_quat(), rotation.as_euler("zxy", degrees=True)
 
 
 if __name__ == "__main__":
@@ -313,8 +337,10 @@ if __name__ == "__main__":
     t265.hardware_reset()
     t265.start(print_update=True)
     try:
+        time.sleep(5)
+        t265.establish_secondary_origin()
         while True:
-            time.sleep(20)
-            # t265.hardware_reset()
+            time.sleep(1)
+            print(f"secondary pose: {t265.get_pose_in_secondary_frame()}")
     finally:
         t265.stop()
