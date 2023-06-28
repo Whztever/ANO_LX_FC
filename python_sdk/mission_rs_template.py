@@ -6,7 +6,6 @@ from time import sleep, time
 from typing import List
 
 import cv2
-from matplotlib.style import available
 import numpy as np
 from configManager import ConfigManager
 from FlightController import FC_Client, FC_Controller
@@ -20,6 +19,7 @@ from FlightController.Solutions.Vision import (
 from FlightController.Solutions.Vision_Net import FastestDetOnnx
 from hmi import HMI
 from loguru import logger
+from matplotlib.style import available
 from simple_pid import PID
 
 
@@ -29,28 +29,31 @@ def deg_360_180(deg):
     return deg
 
 
-cfg = ConfigManager()
-
-# 基地点
-BASE_POINT = cfg.get_array("point-0")
-logger.info(f"[MISSION] Loaded base point: {BASE_POINT}")
-# 降落点
-landing_point = BASE_POINT
-# 任务坐标
-NULL_PT = np.array([np.NaN, np.NaN])
-POINT = lambda x: cfg.get_array(f"point-{x}")
-POINTS_ARR = np.array(
-    [
-        [POINT(1), NULL_PT, POINT(11), NULL_PT, POINT(5)],
-        [NULL_PT, POINT(8), NULL_PT, POINT(3), NULL_PT],
-        [POINT(9), NULL_PT, POINT(2), NULL_PT, POINT(12)],
-        [NULL_PT, POINT(7), NULL_PT, POINT(6), NULL_PT],
-        [NULL_PT, NULL_PT, POINT(10), NULL_PT, POINT(4)],
-    ]
-)
-logger.info(f"[MISSION] Loaded points: {POINTS_ARR}")
-target_points = [cfg.get_array("target-x")]
-logger.info(f"[MISSION] Loaded target points: {target_points}")
+# cfg = ConfigManager()
+#
+# # 基地点
+# BASE_POINT = cfg.get_array("point-0")
+# logger.info(f"[MISSION] Loaded base point: {BASE_POINT}")
+# # 降落点
+# landing_point = BASE_POINT
+# # 任务坐标
+# NULL_PT = np.array([np.NaN, np.NaN])
+# POINT = lambda x: cfg.get_array(f"point-{x}")
+# POINTS_ARR = np.array(
+#     [
+#         [POINT(1), NULL_PT, POINT(11), NULL_PT, POINT(5)],
+#         [NULL_PT, POINT(8), NULL_PT, POINT(3), NULL_PT],
+#         [POINT(9), NULL_PT, POINT(2), NULL_PT, POINT(12)],
+#         [NULL_PT, POINT(7), NULL_PT, POINT(6), NULL_PT],
+#         [NULL_PT, NULL_PT, POINT(10), NULL_PT, POINT(4)],
+#     ]
+# )
+# logger.info(f"[MISSION] Loaded points: {POINTS_ARR}")
+# target_points = [cfg.get_array("target-x")]
+# logger.info(f"[MISSION] Loaded target points: {target_points}")
+BASE_POINT = np.array([0, 0])
+target_points = np.array([[200, 0], [200, -300]])
+LANDING_POINT = np.array([200, -300])
 
 
 class Mission(object):
@@ -61,7 +64,7 @@ class Mission(object):
         self.hmi = hmi
         self.rs = rs
         self.inital_yaw = self.fc.state.yaw.value
-        self.fd = FastestDetOnnx(drawOutput=True)  # 初始化神经网络
+        # self.fd = FastestDetOnnx(drawOutput=True)  # 初始化神经网络
         ############### PID #################
         self.height_pid = PID(0.8, 0.0, 0.1, setpoint=0, output_limits=(-30, 30), auto_mode=False)
         self.navi_x_pid = PID(
@@ -81,11 +84,11 @@ class Mission(object):
             auto_mode=False,
         )
         self.navi_yaw_pid = PID(
-            0.2,
+            0.7,
             0.0,
             0.0,
             setpoint=0,
-            output_limits=(-45, 45),
+            output_limits=(-30, 30),
             auto_mode=False,
         )
         #####################################
@@ -93,6 +96,7 @@ class Mission(object):
         self.navigation_flag = False
         self.running = False
         self.thread_list: List[threading.Thread] = []
+        self.current_pose = (0, 0, 0)
         # vision_debug()
 
     def stop(self):
@@ -124,21 +128,21 @@ class Mission(object):
         logger.info("[MISSION] Threads started")
         ################ 初始化 ################
         fc.set_action_log(False)
-        change_cam_resolution(cam, 800, 600)
-        set_cam_autowb(cam, False)  # 关闭自动白平衡
-        for _ in range(10):
-            cam.read()
-        fc.set_PWM_output(0, self.camera_up_pwm)
+        # change_cam_resolution(cam, 800, 600)
+        # set_cam_autowb(cam, False)  # 关闭自动白平衡
+        # for _ in range(10):
+        #     cam.read()
+        # fc.set_PWM_output(0, self.camera_up_pwm)
         # self.recognize_targets()
         fc.set_flight_mode(fc.PROGRAM_MODE)
         self.set_navigation_speed(self.navigation_speed)
-        for i in range(6):
-            sleep(0.25)
-            fc.set_rgb_led(255, 0, 0)  # 起飞前警告
-            sleep(0.25)
-            fc.set_rgb_led(0, 0, 0)
-        fc.set_PWM_output(0, self.camera_down_pwm)
-        fc.set_digital_output(2, True)  # 激光笔开启
+        # for i in range(6):
+        #     sleep(0.25)
+        #     fc.set_rgb_led(255, 0, 0)  # 起飞前警告
+        #     sleep(0.25)
+        #     fc.set_rgb_led(0, 0, 0)
+        # fc.set_PWM_output(0, self.camera_down_pwm)
+        # fc.set_digital_output(2, True)  # 激光笔开启
         fc.set_action_log(True)
         self.fc.start_realtime_control(20)
         self.switch_pid("default")
@@ -146,16 +150,16 @@ class Mission(object):
         logger.info("[MISSION] Mission-1 Started")
         self.pointing_takeoff(BASE_POINT)
         ################ 开始任务 ################
-        for target_point in target_points:
-            x, y = target_point
-            target_point_pos = POINTS_ARR[y, x]
-            self.navigation_to_waypoint(target_point_pos)
-            self.wait_for_waypoint()
+        # for target_point in target_points:
+        self.navigation_to_waypoint(target_points[0])
+        self.wait_for_waypoint()
+        self.navi_yaw_pid.setpoint = 90
+        sleep(4)
         ######## 回到基地点
         logger.info("[MISSION] Go to base")
-        self.navigation_to_waypoint(BASE_POINT)
+        self.navigation_to_waypoint(LANDING_POINT)
         self.wait_for_waypoint()
-        self.pointing_landing(landing_point)
+        self.pointing_landing(LANDING_POINT)
         logger.info("[MISSION] Misson-1 Finished")
 
     def pointing_takeoff(self, point):
@@ -172,6 +176,7 @@ class Mission(object):
         self.fc.wait_for_takeoff_done()
         self.fc.set_yaw(inital_yaw, 25)
         self.fc.wait_for_hovering(2)
+        # self.rs.establish_secondary_origin()
         ######## 闭环定高
         self.fc.set_flight_mode(self.fc.HOLD_POS_MODE)
         self.height_pid.setpoint = self.cruise_height
@@ -212,7 +217,7 @@ class Mission(object):
         tuning = self.pid_tunings.get(pid, self.pid_tunings["default"])
         self.navi_x_pid.tunings = tuning
         self.navi_y_pid.tunings = tuning
-        logger.info(f"[MISSION] PID Tunings set to {pid}: {tuning}")
+        logger.debug(f"[MISSION] PID Tunings set to {pid}: {tuning}")
 
     def keep_height_task(self):
         paused = False
@@ -248,19 +253,25 @@ class Mission(object):
                     self.navi_y_pid.set_auto_mode(True, last_output=0)
                     self.navi_yaw_pid.set_auto_mode(True, last_output=0)
                     logger.info("[MISSION] Navigation resumed")
-                if not self.radar._rtpose_flag:
-                    self.radar.start_resolve_pose(
-                        size=SIZE,
-                        scale_ratio=SCALE_RATIO,
-                        low_pass_ratio=LOW_PASS_RATIO,
-                    )
-                    logger.info("[MISSION] Resolve pose started")
-                    sleep(0.01)
+                # if not self.radar._rtpose_flag:
+                #     self.radar.start_resolve_pose(
+                #         size=SIZE,
+                #         scale_ratio=SCALE_RATIO,
+                #         low_pass_ratio=LOW_PASS_RATIO,
+                #     )
+                #     logger.info("[MISSION] Resolve pose started")
                 if self.rs.update_event.wait(1):  # 等待地图更新
                     self.rs.update_event.clear()
-                    current_x = -self.rs.pose.translation.z
-                    current_y = -self.rs.pose.translation.x
-                    current_yaw = self.rs.eular_rotation[2]
+                    if not self.rs.secondary_frame_established:
+                        current_x = -self.rs.pose.translation.z * 100
+                        current_y = -self.rs.pose.translation.x * 100
+                        current_yaw = -self.rs.eular_rotation[2]
+                    else:
+                        position, rotation, eular = self.rs.get_pose_in_secondary_frame()
+                        current_x = -position[2] * 100
+                        current_y = -position[0] * 100
+                        current_yaw = -eular[2]
+                    self.current_pose = (current_x, current_y, current_yaw)
                     available = self.rs.pose.tracker_confidence == 3
                     if available:
                         self.fc.send_general_position(x=current_x, y=current_y)
@@ -273,12 +284,12 @@ class Mission(object):
                         out_yaw = int(self.navi_yaw_pid(current_yaw))
                         if out_yaw is not None:
                             self.fc.update_realtime_control(yaw=out_yaw)
-                    if False:  # debug
+                    if 0:  # debug
                         logger.debug(
                             f"[MISSION] Current pose: {current_x}, {current_y}, {current_yaw}; Output: {out_x}, {out_y}, {out_yaw}"
                         )
             else:
-                self.radar.stop_resolve_pose()
+                # self.radar.stop_resolve_pose()
                 if not paused:
                     paused = True
                     self.navi_x_pid.set_auto_mode(False)
@@ -290,16 +301,18 @@ class Mission(object):
     def navigation_to_waypoint(self, waypoint):
         self.navi_x_pid.setpoint = waypoint[0]
         self.navi_y_pid.setpoint = waypoint[1]
+        logger.debug(f"[MISSION] Navigation to waypoint: {waypoint}")
 
     def set_navigation_speed(self, speed):
         speed = abs(speed)
         self.navi_x_pid.output_limits = (-speed, speed)
         self.navi_y_pid.output_limits = (-speed, speed)
+        logger.info(f"[MISSION] Navigation speed set to {speed}")
 
     def reached_waypoint(self, pos_thres=15):
         return (
-            abs(self.radar.rt_pose[0] - self.navi_x_pid.setpoint) < pos_thres
-            and abs(self.radar.rt_pose[1] - self.navi_y_pid.setpoint) < pos_thres
+            abs(self.current_pose[0] - self.navi_x_pid.setpoint) < pos_thres
+            and abs(self.current_pose[1] - self.navi_y_pid.setpoint) < pos_thres
         )
 
     def wait_for_waypoint(self, time_thres=1, pos_thres=15, timeout=30):
@@ -378,3 +391,41 @@ class Mission(object):
         self._avd_height = avd_height
         self._avd_deg = deg
         self._avd_move = avd_move
+
+
+if __name__ == "__main__":
+    logger.warning("DEBUG MODE!!")
+    t265 = T265(event_skip=10)
+    t265.start()
+    # t265.hardware_reset()
+    cam = None
+    hmi = None
+    # fc = FC_Controller()
+    # fc.start_listen_serial("/dev/ttyS6", print_state=True)
+    fc = FC_Client()
+    fc.connect()
+    fc.start_sync_state(False)
+    fc.wait_for_connection()
+    radar = LD_Radar()
+    radar.start("/dev/ttyUSB0", "LD06", subtask_skip=10)
+
+    mission = Mission(fc, radar, cam, hmi, t265)  # type: ignore
+    logger.warning("Press Enter to start mission")
+    input()
+    fc._print_state_flag = False
+    try:
+        mission.run()
+    except Exception as e:
+        import traceback
+
+        logger.error(f"[MANAGER] Mission Failed: {traceback.format_exc()}")
+    finally:
+        if fc.state.unlock.value:
+            logger.warning("[MANAGER] Auto Landing")
+            fc.set_flight_mode(fc.PROGRAM_MODE)
+            fc.stablize()
+            fc.land()
+            ret = fc.wait_for_lock()
+            if not ret:
+                fc.lock()
+    logger.info("[MANAGER] Mission finished")
