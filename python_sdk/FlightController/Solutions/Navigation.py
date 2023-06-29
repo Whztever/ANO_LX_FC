@@ -61,7 +61,7 @@ class Navigation(object):
             logger.error("[NAVI] reset_basepoint(): Radar pose update timeout")
             raise RuntimeError("Radar pose update timeout")
         x, y, _ = self.radar.rt_pose
-        self.basepoint = np.array([0.0, 0.0])
+        self.basepoint = np.array([x, y])
         logger.info(f"[NAVI] Basepoint reset to {self.basepoint}")
 
     def set_navigation_state(self, state: bool):
@@ -167,6 +167,7 @@ class Navigation(object):
                     )
             else:
                 logger.warning("[NAVI] RealSense pose timeout")
+                continue
             if self.navigation_flag and self.fc.state.mode.value == self.fc.HOLD_POS_MODE:
                 if paused:
                     paused = False

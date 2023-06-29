@@ -206,9 +206,14 @@ class FC_Application(FC_Protocol):
 
         注意默认参数为None, 代表不更新对应的值, 若不需要建议置为0而不是留空
         """
-        for n, target in enumerate([vel_x, vel_y, vel_z, yaw]):
-            if target is not None:
-                self._realtime_control_data_in_xyzYaw[n] = target
+        if vel_x is not None:
+            self._realtime_control_data_in_xyzYaw[0] = vel_x
+        if vel_y is not None:
+            self._realtime_control_data_in_xyzYaw[1] = vel_y
+        if vel_z is not None:
+            self._realtime_control_data_in_xyzYaw[2] = vel_z
+        if yaw is not None:
+            self._realtime_control_data_in_xyzYaw[3] = yaw
 
     def set_action_log(self, output: bool) -> None:
         """
