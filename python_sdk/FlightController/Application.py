@@ -3,9 +3,8 @@ import time
 from typing import Optional
 
 import numpy as np
-
-from loguru import logger
 from FlightController.Protocal import FC_Protocol
+from loguru import logger
 
 
 class FC_Application(FC_Protocol):
@@ -46,10 +45,10 @@ class FC_Application(FC_Protocol):
         """
         等待飞控连接
         """
-        t0 = time.time()
+        t0 = time.perf_counter()
         while not self.connected:
             time.sleep(0.1)
-            if timeout_s > 0 and time.time() - t0 > timeout_s:
+            if timeout_s > 0 and time.perf_counter() - t0 > timeout_s:
                 logger.warning("[FC] wait for fc connection timeout")
                 return False
         self._action_log("wait ok", "fc connection")
@@ -59,11 +58,11 @@ class FC_Application(FC_Protocol):
         """
         等待最后一次指令完成
         """
-        t0 = time.time()
+        t0 = time.perf_counter()
         time.sleep(0.5)  # 等待数据回传
         while not self.last_command_done:
             time.sleep(0.1)
-            if timeout_s > 0 and time.time() - t0 > timeout_s:
+            if timeout_s > 0 and time.perf_counter() - t0 > timeout_s:
                 logger.warning("[FC] wait for last command done timeout")
                 return False
         self._action_log("wait ok", "last cmd done")
@@ -73,11 +72,11 @@ class FC_Application(FC_Protocol):
         """
         等待进入悬停状态
         """
-        t0 = time.time()
+        t0 = time.perf_counter()
         time.sleep(0.5)  # 等待数据回传
         while not self.hovering:
             time.sleep(0.1)
-            if timeout_s > 0 and time.time() - t0 > timeout_s:
+            if timeout_s > 0 and time.perf_counter() - t0 > timeout_s:
                 logger.warning("[FC] wait for stabilizing timeout")
                 return False
         self._action_log("wait ok", "stabilizing")
@@ -87,10 +86,10 @@ class FC_Application(FC_Protocol):
         """
         等待锁定
         """
-        t0 = time.time()
+        t0 = time.perf_counter()
         while self.state.unlock.value:
             time.sleep(0.1)
-            if timeout_s > 0 and time.time() - t0 > timeout_s:
+            if timeout_s > 0 and time.perf_counter() - t0 > timeout_s:
                 logger.warning("[FC] wait for lock timeout")
                 return False
         self._action_log("wait ok", "locked")
@@ -100,11 +99,11 @@ class FC_Application(FC_Protocol):
         """
         等待起飞完成
         """
-        t0 = time.time()
+        t0 = time.perf_counter()
         time.sleep(1)  # 等待加速完成
         while self.state.vel_z.value < z_speed_threshold:
             time.sleep(0.1)
-            if timeout_s > 0 and time.time() - t0 > timeout_s:
+            if timeout_s > 0 and time.perf_counter() - t0 > timeout_s:
                 logger.warning("[FC] wait for takeoff done timeout")
                 return False
         if self.state.alt_add.value < 20:
@@ -125,10 +124,10 @@ class FC_Application(FC_Protocol):
         self.set_flight_mode(self.HOLD_POS_MODE)
         time.sleep(0.1)  # 等待模式设置完成
         self.send_realtime_control_data(vel_z=speed)
-        takeoff_time = time.time()
+        takeoff_time = time.perf_counter()
         while hgt.value < height - 20:
             time.sleep(0.1)
-            if time.time() - takeoff_time > timeout_value:  # 超时, 终止
+            if time.perf_counter() - takeoff_time > timeout_value:  # 超时, 终止
                 logger.warning("[FC] takeoff timeout, force stop")
                 self.stablize()
                 return
@@ -143,12 +142,13 @@ class FC_Application(FC_Protocol):
 
     def _realtime_control_task(self, freq):
         logger.info("[FC] realtime control task started")
-        last_send_time = time.time()
+        last_send_time = time.perf_counter()
         pauesed = False
+        interval = 1 / freq
         while self._realtime_control_running:
-            while time.time() - last_send_time < 1 / freq:
+            while time.perf_counter() - last_send_time < interval:
                 time.sleep(0.01)
-            last_send_time = time.time()
+            last_send_time += interval
             if self.state.mode.value != self.HOLD_POS_MODE:
                 if not pauesed:
                     self._action_log("realtime control", "paused")

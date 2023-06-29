@@ -303,7 +303,7 @@ def find_QRcode_contour(frame) -> Tuple[bool, float, float]:
         c = sorted(cnts, key=cv2.contourArea, reverse=True)[0]
         # compute the rotated bounding box of the largest contour
         rect = cv2.minAreaRect(c)
-        box = np.int0(cv2.boxPoints(rect))
+        box = np.intp(cv2.boxPoints(rect))
         # 找出中心点坐标
         M = cv2.moments(c)
         cx = int(M["m10"] / (M["m00"] + 0.0001))
@@ -827,13 +827,14 @@ def set_cam_autoexp(cam, enable=True, manual_exposure=0.25):
 
 class fps_counter:
     def __init__(self, max_sample=60) -> None:
-        self.t = time.time()
+        self.t = time.perf_counter()
         self.max_sample = max_sample
         self.t_list: List[float] = []
 
     def update(self) -> None:
-        self.t_list.append(time.time() - self.t)
-        self.t = time.time()
+        now = time.perf_counter()
+        self.t_list.append(now - self.t)
+        self.t = now
         if len(self.t_list) > self.max_sample:
             self.t_list.pop(0)
 

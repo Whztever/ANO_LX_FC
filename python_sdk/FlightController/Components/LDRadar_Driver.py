@@ -5,10 +5,16 @@ import traceback
 import cv2
 import numpy as np
 import serial
+from FlightController.Components.LDRadar_Resolver import (
+    Map_Circle,
+    Point_2D,
+    Radar_Package,
+    resolve_radar_data,
+)
+from FlightController.Solutions.Radar import radar_resolve_rt_pose
 from loguru import logger
 
-from FlightController.Solutions.Radar import radar_resolve_rt_pose
-from FlightController.Components.LDRadar_Resolver import Map_Circle, Point_2D, Radar_Package, resolve_radar_data
+DEBUG_SAVE_IMAGE = False
 
 
 class LD_Radar(object):
@@ -126,6 +132,8 @@ class LD_Radar(object):
                             thickness=1,
                             draw_outside=False,
                         )
+                        if DEBUG_SAVE_IMAGE:
+                            cv2.imwrite("radar_cloud.png", img)
                         x, y, yaw = radar_resolve_rt_pose(img, skip_er=True, skip_di=True)
                         if x is not None:
                             if self._rt_pose_inited[0]:
@@ -156,7 +164,7 @@ class LD_Radar(object):
                             result = func(self.map, *args, **kwargs)
                             if result:
                                 self.map_func_results[i] = result
-                                self.map_func_update_times[i] = time.time()
+                                self.map_func_update_times[i] = time.perf_counter()
                 else:
                     logger.warning("[RADAR] Map resolve thread wait timeout")
             except Exception as e:
@@ -376,4 +384,3 @@ class LD_Radar(object):
         self._rtpose_size = size if size is not None else self._rtpose_size
         self._rtpose_scale_ratio = ratio if ratio is not None else self._rtpose_scale_ratio
         self._rtpose_low_pass_ratio = low_pass_ratio if low_pass_ratio is not None else self._rtpose_low_pass_ratio
-
