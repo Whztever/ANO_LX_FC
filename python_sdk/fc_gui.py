@@ -1,3 +1,4 @@
+# pip-generator: skip file
 import sys
 from time import sleep, time
 

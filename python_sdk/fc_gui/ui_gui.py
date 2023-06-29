@@ -1,3 +1,4 @@
+# pip-generator: skip file
 # -*- coding: utf-8 -*-
 
 ################################################################################
@@ -932,4 +933,3 @@ class Ui_MainWindow(object):
         self.label_sensor_image.setText(QCoreApplication.translate("MainWindow", u"TODO", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_3), QCoreApplication.translate("MainWindow", u" \u6811\u8393\u6d3e\u56fe\u4f20 ", None))
     # retranslateUi
-
