@@ -1,6 +1,5 @@
 import struct
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -8,7 +7,7 @@ import numpy as np
 from loguru import logger
 from scipy.signal import find_peaks
 
-from ._Driver_Components import calculate_crc8
+from FlightController.Components.LDRadar_Driver_Components import calculate_crc8
 
 
 class Point_2D(object):

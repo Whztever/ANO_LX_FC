@@ -7,8 +7,8 @@ import numpy as np
 import serial
 from loguru import logger
 
-from ..Solutions.Radar import radar_resolve_rt_pose
-from .LDRadar_Resolver import Map_Circle, Point_2D, Radar_Package, resolve_radar_data
+from FlightController.Solutions.Radar import radar_resolve_rt_pose
+from FlightController.Components.LDRadar_Resolver import Map_Circle, Point_2D, Radar_Package, resolve_radar_data
 
 
 class LD_Radar(object):
@@ -377,9 +377,3 @@ class LD_Radar(object):
         self._rtpose_scale_ratio = ratio if ratio is not None else self._rtpose_scale_ratio
         self._rtpose_low_pass_ratio = low_pass_ratio if low_pass_ratio is not None else self._rtpose_low_pass_ratio
 
-
-if __name__ == "__main__":
-    radar = LD_Radar()
-    radar.start("COM8", "LD08")
-    radar.show_radar_map()
-    cv2.destroyAllWindows()

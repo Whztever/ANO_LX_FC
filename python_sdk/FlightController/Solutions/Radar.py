@@ -2,8 +2,7 @@ from typing import List, Literal, Optional, Tuple
 
 import cv2
 import numpy as np
-
-from ..Components.LDRadar_Resolver import Point_2D
+from FlightController.Components.LDRadar_Resolver import Point_2D
 
 ############参数设置##############
 KERNAL_DI = 9  # 膨胀核大小

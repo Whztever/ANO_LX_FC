@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from loguru import logger
 
-from .Serial import FC_Serial
+from FlightController.Serial import FC_Serial
 
 
 def bytes_to_str(data):

@@ -2,7 +2,7 @@ import struct
 import time
 from typing import Optional
 
-from .Base import Byte_Var, FC_Base_Uart_Comunication
+from FlightController.Base import Byte_Var, FC_Base_Uart_Comunication
 from loguru import logger
 
 

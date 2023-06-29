@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 
 from loguru import logger
-from .Protocal import FC_Protocol
+from FlightController.Protocal import FC_Protocol
 
 
 class FC_Application(FC_Protocol):

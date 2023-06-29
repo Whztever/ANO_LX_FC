@@ -7,7 +7,7 @@ from typing import Optional
 
 from loguru import logger
 
-from .Application import FC_Application
+from FlightController.Application import FC_Application
 
 
 def get_ip():
