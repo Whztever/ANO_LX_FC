@@ -129,7 +129,7 @@ class T265(object):
         self.frame_timestamp: float = 0.0  # timestamp
         self.running = False
         self.update_event = threading.Event()
-        self._event_skip = event_skip
+        self.event_skip = event_skip
         if log_to_file:
             rs.log_to_file(getattr(rs.log_severity, log_level), "rs_t265.log")
         if log_to_console:
@@ -171,7 +171,7 @@ class T265(object):
         if self._callbacks:
             for callback in self._callbacks:
                 callback(self.pose, self.frame_num, self.frame_timestamp)
-        if self._event_skip == 0 or self._update_count % self._event_skip == 0:
+        if self.event_skip == 0 or self._update_count % self.event_skip == 0:
             self.update_event.set()
 
     def _print_pose(self, refresh=True) -> None:
@@ -189,10 +189,9 @@ class T265(object):
             f"Tracker conf: {self.pose.tracker_confidence}, Mapper conf: {self.pose.mapper_confidence}"
         )
         if self.secondary_frame_established:
-            position, rotation, eular = self.get_pose_in_secondary_frame()
+            position, eular = self.get_pose_in_secondary_frame(as_eular=True)
             text += (
                 f"\n2nd Translation   : {position[0]:11.6f},{position[1]:11.6f},{position[2]:11.6f};\n"
-                f"2nd Rotation      : {rotation[0]:11.6f},{rotation[1]:11.6f},{rotation[2]:11.6f},{rotation[3]:11.6f};\n"
                 f"2nd Roll/Pitch/Yaw: {eular[0]:11.6f},{eular[1]:11.6f},{eular[2]:11.6f}"
             )
             if refresh:
@@ -215,6 +214,7 @@ class T265(object):
         else:
             self._pipe.start(self._cfg)
         self._update_count = 0
+        self.secondary_frame_established = False
         self._start_time = time.perf_counter()
         self.running = True
         logger.info("[T265] Started")
@@ -240,7 +240,7 @@ class T265(object):
         if self._callbacks:
             for callback in self._callbacks:
                 callback(self.pose, self.frame_num, self.frame_timestamp)
-        if self._event_skip == 0 or self._update_count % self._event_skip == 0:
+        if self.event_skip == 0 or self._update_count % self.event_skip == 0:
             self.update_event.set()
 
     def register_callback(self, callback: Callable[[T265_Pose_Frame, int, float], None]) -> None:
@@ -287,6 +287,7 @@ class T265(object):
                 self._pipe.start(self._cfg)
             self._update_count = 0
             self._start_time = time.perf_counter()
+        self.secondary_frame_established = False
 
     @property
     def eular_rotation(self) -> Tuple[float, float, float]:
@@ -305,16 +306,21 @@ class T265(object):
         ).as_euler("zxy", degrees=True)
 
     def establish_secondary_origin(
-        self, force_level: bool = True, x_offset: float = 0, y_offset: float = 0, z_offset: float = 0
+        self,
+        force_level: bool = True,
+        x_offset: float = 0.0,
+        y_offset: float = 0.0,
+        z_offset: float = 0.0,
+        yaw_offset: float = 0,
     ):
         """
         以当前位置和姿态建立副坐标系原点
         force_level: 强制副坐标系为水平面
+        offset: 当前位置相对于副坐标系原点的偏移
+        (yaw_offset: 仅当返回eular时有效)
         """
         # 获取当前位置和朝向
-        position = np.array(
-            [self.pose.translation.x + x_offset, self.pose.translation.y + y_offset, self.pose.translation.z + z_offset]
-        )
+        position = np.array([self.pose.translation.x, self.pose.translation.y, self.pose.translation.z])
         orientation = np.array([self.pose.rotation.x, self.pose.rotation.y, self.pose.rotation.z, self.pose.rotation.w])
         if force_level:
             orientation[0] = 0
@@ -326,13 +332,16 @@ class T265(object):
         self._secondary_orientation = orientation
         self._secondary_rotation = Rotation.from_quat(orientation)  # xyzw
         self._secondary_rotation_matrix = self._secondary_rotation.as_matrix()
+        self._offset_position = np.array([x_offset, y_offset, z_offset])
+        self._offset_yaw = yaw_offset
         logger.debug(f"[T265] Secondary origin established: {self._secondary_position}, {self._secondary_orientation}")
         self.secondary_frame_established = True
 
-    def get_pose_in_secondary_frame(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def get_pose_in_secondary_frame(self, as_eular=True) -> Tuple[np.ndarray, np.ndarray]:
         """
         获取当前位置和姿态在副坐标系中的表示
-        return: xyz位置, xyzw四元数, rpy欧拉角
+        as_eular: 是否返回欧拉角
+        return: xyz位置, xyzw四元数/rpy欧拉角
         """
         if not self.secondary_frame_established:
             raise RuntimeError("Secondary frame not established")
@@ -350,7 +359,13 @@ class T265(object):
         # orientation = rotation_matrix_to_quaternions(rotation_matrix)
         rotation = Rotation.from_quat(orientation) * self._secondary_rotation.inv()
 
-        return position, rotation.as_quat(), rotation.as_euler("zxy", degrees=True)
+        position -= self._offset_position
+        if as_eular:
+            euler = rotation.as_euler("zxy", degrees=True)
+            if self._offset_yaw != 0:
+                euler[2] = (euler[2] - self._offset_yaw + 180) % 360 - 180
+            return position, euler
+        return position, rotation.as_quat()
 
 
 if __name__ == "__main__":
