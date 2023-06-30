@@ -1,6 +1,5 @@
 import configparser
 import os
-import re
 from typing import Any, Optional
 
 import numpy as np
@@ -27,51 +26,7 @@ class ConfigManager:
         else:
             open(file_path, "w").close()
         self._section_name = section.upper()
-        self._init_file_(default_setting.copy())
-
-    def get(self, option: str) -> str:
-        """
-        Get the value of an option, return as string
-        """
-        return self._config.get(self._section_name, option)
-
-    def get_bool(self, option: str) -> bool:
-        """
-        Get the value of an option, return as boolean
-        """
-        return self._config.getboolean(self._section_name, option)
-
-    def get_int(self, option: str) -> int:
-        """
-        Get the value of an option, return as integer
-        """
-        return self._config.getint(self._section_name, option)
-
-    def get_float(self, option: str) -> float:
-        """
-        Get the value of an option, return as float
-        """
-        return self._config.getfloat(self._section_name, option)
-
-    def get_eval(self, option: str):
-        """
-        Get the value of an option, return as python object
-        """
-        return eval(self.get(option))
-
-    def get_array(self, option: str, dtype: Optional[str] = None) -> np.ndarray:
-        """
-        Get the value of an option, return as numpy array
-        dtype: str, optional, numpy format, default None
-        """
-        string = self.get(option).strip()
-        # string = re.sub(r"\[\s+", r"[", string)
-        # string = re.sub(r"\s(\d)", r",\1", string)
-        # string = string.replace("\n", ",")
-        if type == None:
-            return np.array(eval(string))
-        else:
-            return np.array(eval(string), dtype)
+        self._init_file(default_setting.copy())
 
     def set(self, option: str, value: Any):
         """
@@ -79,7 +34,8 @@ class ConfigManager:
         """
         if isinstance(value, np.ndarray):
             value = value.tolist()
-        value = repr(value)
+        if not isinstance(value, str):
+            value = repr(value)
         self._config.set(self._section_name, option, value)
         with open(self._config_file, "w") as f:
             self._config.write(f)
@@ -92,14 +48,12 @@ class ConfigManager:
         with open(self._config_file, "w") as f:
             self._config.write(f)
 
-    def _init_file_(self, default_setting: dict):
+    def _init_file(self, default_setting: dict):
         if self._section_name not in self._config.sections():
             self._config.add_section(self._section_name)
 
         for key, value in default_setting.items():
-            if self._config.has_option(self._section_name, key):
-                default_setting[key] = self._config.get(self._section_name, key)
-            else:
+            if not self._config.has_option(self._section_name, key):
                 self.set(key, value)
 
     def set_from_dict(self, setting_dict: dict):
@@ -109,9 +63,94 @@ class ConfigManager:
         for key, value in setting_dict.items():
             self.set(key, value)
 
-    def dict(self):
+    def dict(self) -> dict[str, str]:
         """
         Return a dictionary of all options
         """
         items = self._config.items(self._section_name)
         return {i[0]: i[1] for i in items}
+
+    def clear_all(self):
+        """
+        Remove all options
+        """
+        for key in self.dict().keys():
+            self._config.remove_option(self._section_name, key)
+        with open(self._config_file, "w") as f:
+            self._config.write(f)
+
+    def get(self, option: str, default: Optional[str] = None) -> Optional[str]:
+        """
+        Get the value of an option, return as string
+        """
+        if self._config.has_option(self._section_name, option):
+            return self._config.get(self._section_name, option)
+        else:
+            if default is not None:
+                self.set(option, default)
+            return default
+
+    def get_bool(self, option: str, default: Optional[bool] = None) -> Optional[bool]:
+        """
+        Get the value of an option, return as boolean
+        """
+        if self._config.has_option(self._section_name, option):
+            return self._config.getboolean(self._section_name, option)
+        else:
+            if default is not None:
+                self.set(option, default)
+            return default
+
+    def get_int(self, option: str, default: Optional[int] = None) -> Optional[int]:
+        """
+        Get the value of an option, return as integer
+        """
+        if self._config.has_option(self._section_name, option):
+            return self._config.getint(self._section_name, option)
+        else:
+            if default is not None:
+                self.set(option, default)
+            return default
+
+    def get_float(self, option: str, default: Optional[float] = None) -> Optional[float]:
+        """
+        Get the value of an option, return as float
+        """
+        if self._config.has_option(self._section_name, option):
+            return self._config.getfloat(self._section_name, option)
+        else:
+            if default is not None:
+                self.set(option, default)
+            return default
+
+    def get_eval(self, option: str, default: Optional[Any] = None) -> Optional[Any]:
+        """
+        Get the value of an option, return as python object
+        """
+        if self._config.has_option(self._section_name, option):
+            return eval(self._config.get(self._section_name, option))
+        else:
+            if default is not None:
+                self.set(option, default)
+            return default
+
+    def get_array(
+        self, option: str, dtype: Optional[str] = None, default: Optional[Any] = None
+    ) -> Optional[np.ndarray]:
+        """
+        Get the value of an option, return as numpy array
+        dtype: str, optional, numpy format, default None
+        """
+        if self._config.has_option(self._section_name, option):
+            string = self._config.get(self._section_name, option).strip()
+            # string = re.sub(r"\[\s+", r"[", string)
+            # string = re.sub(r"\s(\d)", r",\1", string)
+            # string = string.replace("\n", ",")
+            if dtype == None:
+                return np.array(eval(string))
+            else:
+                return np.array(eval(string), dtype)
+        else:
+            if default is not None:
+                self.set(option, default)
+            return default
