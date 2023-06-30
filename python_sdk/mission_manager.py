@@ -246,9 +246,7 @@ try:
 
     logger.info("[MANAGER] Mission Finished")
 except Exception as e:
-    import traceback
-
-    logger.error(f"[MANAGER] Mission Failed: {traceback.format_exc()}")
+    logger.exception(f"[MANAGER] Mission Failed")
 finally:
     if mission_func is not None:
         mission_func.stop()

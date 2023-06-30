@@ -14,4 +14,4 @@ class FC_Controller(__FC_without_remote_layer__):
 
 __all__ = ["FC_Controller", "FC_Client", "FC_Server", "logger"]
 
-logger.add("fc_log/{time}.log", retention="7 days", level="DEBUG")
+logger.add("fc_log/{time}.log", retention="7 days", level="DEBUG", backtrace=True, diagnose=True)

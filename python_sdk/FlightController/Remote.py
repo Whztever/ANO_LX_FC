@@ -201,7 +201,7 @@ class FC_Client(FC_Application):
                 if self._print_state_flag:
                     self._print_state()
             except Exception as e:
-                logger.error(f"[FC_Client] State sync error: {e}")
+                logger.exception(f"[FC_Client] State sync error")
                 if "WinError" in str(e) or "Broken pipe" in str(e):
                     logger.warning("[FC_Client] Connection lost, trying to reconnect")
                     self.running = False

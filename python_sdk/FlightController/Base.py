@@ -2,7 +2,6 @@ import re
 import struct
 import threading
 import time
-import traceback
 from typing import List, Optional
 
 from FlightController.Serial import FC_Serial
@@ -423,7 +422,7 @@ class FC_Base_Uart_Comunication(object):
                             pass
                 time.sleep(0.001)  # 降低CPU占用
             except Exception as e:
-                logger.error(f"[FC] listen serial exception: {traceback.format_exc()}")
+                logger.exception(f"[FC] listen serial exception")
 
     def _update_state(self, recv_byte):
         try:
@@ -441,7 +440,7 @@ class FC_Base_Uart_Comunication(object):
             if self._print_state_flag:
                 self.state.print()
         except Exception as e:
-            logger.error(f"[FC] Update state exception: {traceback.format_exc()}")
+            logger.exception(f"[FC] Update state exception")
 
     def _set_event_callback(self, func):
         self._event_update_callback = func
@@ -459,4 +458,4 @@ class FC_Base_Uart_Comunication(object):
             if callable(self._event_update_callback):
                 self._event_update_callback(event_code, event_operator)
         except Exception as e:
-            logger.error(f"[FC] Update event exception: {traceback.format_exc()}")
+            logger.exception(f"[FC] Update event exception")

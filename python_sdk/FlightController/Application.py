@@ -161,7 +161,7 @@ class FC_Application(FC_Protocol):
             try:
                 self.send_realtime_control_data(*self._realtime_control_data_in_xyzYaw)
             except Exception as e:
-                logger.warning(f"[FC] realtime control task error: {e}")
+                logger.exception(f"[FC] realtime control task error")
         logger.info("[FC] realtime control task stopped")
 
     def start_realtime_control(self, freq: float = 15) -> None:

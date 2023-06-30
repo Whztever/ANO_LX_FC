@@ -1,6 +1,5 @@
 import threading
 import time
-import traceback
 
 import cv2
 import numpy as np
@@ -111,7 +110,7 @@ class LD_Radar(object):
                 else:
                     time.sleep(0.001)
             except Exception as e:
-                logger.error(f"[RADAR] Listenning thread error: {traceback.format_exc()}")
+                logger.exception(f"[RADAR] Listenning thread error")
                 time.sleep(0.5)
 
     def _map_resolve_task(self):
@@ -170,9 +169,7 @@ class LD_Radar(object):
                 else:
                     logger.warning("[RADAR] Map resolve thread wait timeout")
             except Exception as e:
-                import traceback
-
-                logger.error(f"[RADAR] Map resolve thread error: {traceback.format_exc()}")
+                logger.exception(f"[RADAR] Map resolve thread error")
                 time.sleep(0.5)
 
     def _init_radar_map(self):
