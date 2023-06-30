@@ -2,7 +2,7 @@
 使用雷达作为位置闭环的任务模板
 """
 import threading
-from time import sleep, time
+import time
 from typing import List
 
 import cv2
@@ -81,7 +81,16 @@ class Mission(object):
         self.precision_speed = 25  # 精确速度
         self.cruise_height = 140  # 巡航高度
         self.goods_height = 80  # 处理物品高度
+        self.vertical_speed = 20  # 垂直速度
+        self.navi.pid_tunings = {
+            "default": (0.35, 0.0, 0.08),  # 导航
+            "delivery": (0.4, 0.05, 0.16),  # 配送
+            "landing": (0.4, 0.05, 0.16),  # 降落
+        }  # PID参数 (仅导航XY使用)
         ################ 启动线程 ################
+        fc.set_flight_mode(fc.PROGRAM_MODE)
+        self.navi.set_navigation_speed(self.navigation_speed)
+        self.navi.set_vertical_speed(self.vertical_speed)
         self.navi.start()  # 启动导航线程
         logger.info("[MISSION] Navigation started")
         ################ 初始化 ################
@@ -92,8 +101,6 @@ class Mission(object):
         #     cam.read()
         # fc.set_PWM_output(0, self.camera_up_pwm)
         # self.recognize_targets()
-        fc.set_flight_mode(fc.PROGRAM_MODE)
-        self.navi.set_navigation_speed(self.navigation_speed)
         # for i in range(6):
         #     sleep(0.25)
         #     fc.set_rgb_led(255, 0, 0)  # 起飞前警告
@@ -102,11 +109,10 @@ class Mission(object):
         # fc.set_PWM_output(0, self.camera_down_pwm)
         # fc.set_digital_output(2, True)  # 激光笔开启
         fc.set_action_log(True)
-        self.fc.start_realtime_control(20)
         self.navi.switch_pid("default")
         ################ 初始化完成 ################
         logger.info("[MISSION] Mission-1 Started")
-        self.navi.pointing_takeoff(BASE_POINT)
+        self.navi.pointing_takeoff(BASE_POINT, self.cruise_height)
         ################ 开始任务 ################
         for target_point in TARGET_POINTS:
             self.navi.navigation_to_waypoint(target_point)
@@ -146,6 +152,7 @@ if __name__ == "__main__":
 
         logger.error(f"[MANAGER] Mission Failed: {traceback.format_exc()}")
     finally:
+        mission.stop()
         if fc.state.unlock.value:
             logger.warning("[MANAGER] Auto Landing")
             fc.set_flight_mode(fc.PROGRAM_MODE)

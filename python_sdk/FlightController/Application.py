@@ -192,6 +192,13 @@ class FC_Application(FC_Protocol):
             self._realtime_control_thread = None  # type: ignore
         self._realtime_control_data_in_xyzYaw = [0, 0, 0, 0]
 
+    @property
+    def realtime_control_status(self) -> bool:
+        """
+        自动发送实时控制是否正在运行
+        """
+        return self._realtime_control_running
+
     def update_realtime_control(
         self,
         vel_x: Optional[int] = None,
