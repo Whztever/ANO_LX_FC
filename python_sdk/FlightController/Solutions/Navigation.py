@@ -14,6 +14,7 @@ class Navigation(object):
     """
     闭环导航, 使用realsense T265作为位置闭环, 使用雷达作为定位校准, 使用飞控返回的激光高度作为高度闭环
     """
+
     def __init__(self, fc: Union[FC_Client, FC_Controller], radar: LD_Radar, rs: T265):
         self.fc = fc
         self.radar = radar
@@ -115,6 +116,11 @@ class Navigation(object):
         RADAR_SKIP = 20  # 400/RADAR_SKIP
         RS_SKIP = 5  # 200/RS_SKIP
         ########################
+        if self.running:
+            logger.warning("[NAVI] Navigation already running, restarting...")
+            self.stop(join=True)
+        assert self.rs.running, "RealSense not running"
+        assert self.radar.running, "Radar not running"
         self.running = True
         self.radar.subtask_skip = RADAR_SKIP
         self.rs.event_skip = RS_SKIP
@@ -136,6 +142,7 @@ class Navigation(object):
     def switch_pid(self, pid: Union[str, tuple]):
         """
         切换PID参数
+
         pid: str-在self.pid_tunings中的键值, tuple-自定义PID参数
         """
         if isinstance(pid, str):
@@ -260,13 +267,12 @@ class Navigation(object):
     def navigation_to_waypoint(self, waypoint):
         """
         导航到指定的目标点
+
         waypoint: (x, y) 相对于基地点的坐标 / cm
         """
         self.navi_x_pid.setpoint = waypoint[0]
         self.navi_y_pid.setpoint = waypoint[1]
         logger.debug(f"[NAVI] Navigation to waypoint: {waypoint}")
-
-    goto = navigation_to_waypoint  # alias
 
     @property
     def navigation_target(self) -> np.ndarray:
@@ -283,6 +289,7 @@ class Navigation(object):
     def navigation_stop_here(self) -> np.ndarray:
         """
         原地停止(设置目标点为当前位置)
+
         return: 原定目标点
         """
         waypoint = self.navigation_target
@@ -294,6 +301,7 @@ class Navigation(object):
     def set_height(self, height: float):
         """
         设置飞行高度
+
         height: 激光高度 / cm
         """
         self.height_pid.setpoint = height
@@ -302,6 +310,7 @@ class Navigation(object):
     def set_yaw(self, yaw: float):
         """
         设置飞行航向
+
         yaw: 相对于初始状态的航向角 / deg
         """
         self.yaw_pid.setpoint = yaw
@@ -310,6 +319,7 @@ class Navigation(object):
     def navigation_to_waypoint_relative(self, waypoint_rel):
         """
         导航到指定的目标点
+
         waypoint_rel: (x, y) 相对偏移于当前位置的坐标 / cm
         """
         self.navi_x_pid.setpoint += waypoint_rel[0]
@@ -318,11 +328,10 @@ class Navigation(object):
             f"[NAVI] Navigation to waypoint: {self.navi_x_pid.setpoint}, {self.navi_y_pid.setpoint} (relative from {waypoint_rel})"
         )
 
-    move = navigation_to_waypoint_relative  # alias
-
     def set_navigation_speed(self, speed):
         """
         设置导航速度
+
         speed: 速度 / cm/s
         """
         speed = abs(speed)
@@ -333,6 +342,7 @@ class Navigation(object):
     def set_vertical_speed(self, speed):
         """
         设置垂直速度
+
         speed: 速度 / cm/s
         """
         speed = abs(speed)
@@ -342,6 +352,7 @@ class Navigation(object):
     def set_yaw_speed(self, speed):
         """
         设置偏航速度
+
         speed: 速度 / deg/s
         """
         speed = abs(speed)
@@ -357,6 +368,7 @@ class Navigation(object):
     def pointing_takeoff(self, point, target_height=140):
         """
         定点起飞
+
         point: (x, y) 相对于基地点的坐标 / cm
         target_height: 起飞高度 / cm
         """
@@ -385,6 +397,7 @@ class Navigation(object):
     def pointing_landing(self, point):
         """
         定点降落
+
         point: (x, y) 相对于基地点的坐标 / cm
         """
         logger.info(f"[NAVI] Landing at {point}")
@@ -412,6 +425,7 @@ class Navigation(object):
     def wait_for_waypoint(self, time_thres=0.5, pos_thres=15, timeout=30):
         """
         等待到达目标点
+
         time_thres: 到达目标点后积累的时间/s
         pos_thres: 到达目标点的距离阈值/cm
         timeout: 超时时间/s
@@ -432,6 +446,7 @@ class Navigation(object):
     def wait_for_height(self, time_thres=0.5, height_thres=8, timeout=30):
         """
         等待到达目标高度(定高设定值)
+
         time_thres: 到达目标高度后积累的时间/s
         pos_thres: 到达目标高度的阈值/cm
         timeout: 超时时间/s
@@ -452,6 +467,7 @@ class Navigation(object):
     def wait_for_yaw(self, time_thres=0.5, yaw_thres=5, timeout=30):
         """
         等待到达目标偏航角
+
         time_thres: 到达目标偏航角后积累的时间/s
         pos_thres: 到达目标偏航角的阈值/deg
         timeout: 超时时间/s
@@ -469,12 +485,10 @@ class Navigation(object):
                 logger.warning("[NAVI] Yaw overtime")
                 return
 
-    wait = wait_for_waypoint  # alias
-    wait_height = wait_for_height  # alias
-
     def wait_for_waypoint_with_avoidance(self, time_thres=1, pos_thres=15, timeout=60):
         """
         等待到达目标点，同时进行避障
+
         time_thres: 到达目标点后积累的时间/s
         pos_thres: 到达目标点的距离阈值/cm
         timeout: 超时时间/s
@@ -528,6 +542,7 @@ class Navigation(object):
     ):
         """
         设置避障参数
+
         fp_deg: 目标避障角度(deg) (0~360)
         fp_deg_range: 目标避障角度范围(deg)
         fp_dist: 目标避障距离(mm)
