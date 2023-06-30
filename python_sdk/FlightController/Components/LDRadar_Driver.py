@@ -14,8 +14,6 @@ from FlightController.Components.LDRadar_Resolver import (
 from FlightController.Solutions.Radar import radar_resolve_rt_pose
 from loguru import logger
 
-DEBUG_SAVE_IMAGE = False
-
 
 class LD_Radar(object):
     def __init__(self):
@@ -25,6 +23,7 @@ class LD_Radar(object):
         self._package = Radar_Package()
         self._serial = None
         self._update_callback = None
+        self.debug = False
         self.subtask_event = threading.Event()
         self.subtask_skip = 4
         # 位姿估计
@@ -121,20 +120,23 @@ class LD_Radar(object):
                 if self.subtask_event.wait(1):
                     self.subtask_event.clear()
                     if self._rtpose_flag:
-                        # img = self.map.output_cloud(
-                        #     size=int(self._rtpose_size),
-                        #     scale=0.1 * self._rtpose_scale_ratio,
-                        # )
-                        # x, y, yaw = radar_resolve_rt_pose(img)
-                        img = self.map.output_polyline_cloud(
-                            size=int(self._rtpose_size),
-                            scale=0.1 * self._rtpose_scale_ratio,
-                            thickness=1,
-                            draw_outside=False,
+                        if self._rtpose_polyline:
+                            img = self.map.output_polyline_cloud(
+                                size=int(self._rtpose_size),
+                                scale=0.1 * self._rtpose_scale_ratio,
+                                thickness=1,
+                                draw_outside=False,
+                            )
+                        else:
+                            img = self.map.output_cloud(
+                                size=int(self._rtpose_size),
+                                scale=0.1 * self._rtpose_scale_ratio,
+                            )
+                        # if self.debug:
+                            # cv2.imwrite("radar_cloud_debug.png", img)
+                        x, y, yaw = radar_resolve_rt_pose(
+                            img, skip_er=self._rtpose_polyline, skip_di=self._rtpose_polyline, debug=self.debug, debug_save_img=self.debug
                         )
-                        if DEBUG_SAVE_IMAGE:
-                            cv2.imwrite("radar_cloud.png", img)
-                        x, y, yaw = radar_resolve_rt_pose(img, skip_er=True, skip_di=True)
                         if x is not None:
                             if self._rt_pose_inited[0]:
                                 self.rt_pose[0] += (
@@ -351,17 +353,21 @@ class LD_Radar(object):
         self._map_funcs[func_id][1] = args
         self._map_funcs[func_id][2] = kwargs
 
-    def start_resolve_pose(self, size: int = 1000, scale_ratio: float = 1, low_pass_ratio: float = 0.5):
+    def start_resolve_pose(
+        self, size: int = 1000, scale_ratio: float = 1, low_pass_ratio: float = 0.5, polyline: bool = False
+    ):
         """
         开始使用点云图解算位姿
         size: 解算范围(长宽为size的正方形)
         scale_ratio: 降采样比例, 降低精度节省计算资源
         low_pass_ratio: 低通滤波比例
+        polyline: 是否使用多边形点云
         """
         self._rtpose_flag = True
         self._rtpose_size = size
         self._rtpose_scale_ratio = scale_ratio
         self._rtpose_low_pass_ratio = low_pass_ratio
+        self._rtpose_polyline = polyline
         self.rt_pose = [0, 0, 0]
         self._rt_pose_inited = [False, False, False]
 
@@ -374,13 +380,15 @@ class LD_Radar(object):
         self._rt_pose_inited = [False, False, False]
         self.rt_pose_update_event.clear()
 
-    def update_resolve_pose_args(self, size=None, ratio=None, low_pass_ratio=None):
+    def update_resolve_pose_args(self, size=None, ratio=None, low_pass_ratio=None, polyline=None):
         """
         更新位姿参数
         size: 解算范围(长宽为size的正方形)
         scale_ratio: 降采样比例, 降低精度节省计算资源
         low_pass_ratio: 低通滤波比例
+        polyline: 是否使用多边形点云
         """
         self._rtpose_size = size if size is not None else self._rtpose_size
         self._rtpose_scale_ratio = ratio if ratio is not None else self._rtpose_scale_ratio
         self._rtpose_low_pass_ratio = low_pass_ratio if low_pass_ratio is not None else self._rtpose_low_pass_ratio
+        self._rtpose_polyline = polyline if polyline is not None else self._rtpose_polyline

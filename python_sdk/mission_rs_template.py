@@ -81,11 +81,6 @@ class Mission(object):
         self.precision_speed = 25  # 精确速度
         self.cruise_height = 140  # 巡航高度
         self.goods_height = 80  # 处理物品高度
-        self.pid_tunings = {
-            "default": (0.35, 0, 0.08),  # 导航
-            "delivery": (0.4, 0.05, 0.16),  # 配送
-            "landing": (0.4, 0.05, 0.16),  # 降落
-        }  # PID参数 (仅导航XY使用)
         ################ 启动线程 ################
         self.navi.start()  # 启动导航线程
         logger.info("[MISSION] Navigation started")

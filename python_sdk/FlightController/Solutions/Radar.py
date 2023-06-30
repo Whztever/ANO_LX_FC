@@ -24,7 +24,7 @@ yaw_dbg = 0
 
 
 def radar_resolve_rt_pose(
-    img, debug=False, skip_di=False, skip_er=False
+    img, debug=False, debug_save_img=False, skip_di=False, skip_er=False
 ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """
     从雷达点云图像中解析出中点位置
@@ -143,7 +143,10 @@ def radar_resolve_rt_pose(
             (0, 0, 255),
             1,
         )
-        cv2.imshow("Map Resolve", img)
+        if debug_save_img:
+            cv2.imwrite("radar_resolve_debug.png", img)
+        else:
+            cv2.imshow("Map Resolve", img)
     return x_out, y_out, yaw_out
 
 

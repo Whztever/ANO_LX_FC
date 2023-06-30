@@ -18,20 +18,18 @@ class Navigation(object):
         ############### PID #################
         self.pid_tunings = {
             "default": (0.35, 0.0, 0.08),  # 导航
+            "delivery": (0.4, 0.05, 0.16),  # 配送
+            "landing": (0.4, 0.05, 0.16),  # 降落
         }  # PID参数 (仅导航XY使用)
         self.height_pid = PID(0.8, 0.0, 0.1, setpoint=0, output_limits=(-30, 30), auto_mode=False)
         self.navi_x_pid = PID(
-            0.4,
-            0,
-            0.08,
+            *self.pid_tunings["default"],
             setpoint=0,
             output_limits=(-0.01, 0.01),
             auto_mode=False,
         )
         self.navi_y_pid = PID(
-            0.4,
-            0,
-            0.08,
+            *self.pid_tunings["default"],
             setpoint=0,
             output_limits=(-0.01, 0.01),
             auto_mode=False,
@@ -39,7 +37,7 @@ class Navigation(object):
         self.navi_yaw_pid = PID(
             0.7,
             0.0,
-            0.0,
+            0.05,
             setpoint=0,
             output_limits=(-30, 30),
             auto_mode=False,
@@ -56,13 +54,18 @@ class Navigation(object):
         self.debug = False
         self._thread_list: List[threading.Thread] = []
 
-    def reset_basepoint(self):
+    def reset_basepoint(self) -> np.ndarray:
         if not self.radar.rt_pose_update_event.wait(3):
             logger.error("[NAVI] reset_basepoint(): Radar pose update timeout")
             raise RuntimeError("Radar pose update timeout")
         x, y, _ = self.radar.rt_pose
         self.basepoint = np.array([x, y])
         logger.info(f"[NAVI] Basepoint reset to {self.basepoint}")
+        return self.basepoint
+
+    def set_basepoint(self, point):
+        self.basepoint = np.asarray(point)
+        logger.info(f"[NAVI] Basepoint set to {self.basepoint}")
 
     def set_navigation_state(self, state: bool):
         self.navigation_flag = state
@@ -86,8 +89,8 @@ class Navigation(object):
         SIZE = 1000
         SCALE_RATIO = 0.5
         LOW_PASS_RATIO = 0.6
-        RADAR_SKIP = 20  # 400
-        RS_SKIP = 5  # 200
+        RADAR_SKIP = 20  # 400/RADAR_SKIP
+        RS_SKIP = 5  # 200/RS_SKIP
         ########################
         self.running = True
         self.radar.subtask_skip = RADAR_SKIP
@@ -128,13 +131,17 @@ class Navigation(object):
             while time.perf_counter() - last_run_time < interval:
                 time.sleep(0.01)
             last_run_time += interval
+            self.current_height = self.fc.state.alt_add.value
+            if self.debug:
+                logger.debug(f"[NAVI] Current height: {self.current_height}")
             if self.keep_height_flag and self.fc.state.mode.value == self.fc.HOLD_POS_MODE:
                 if paused:
                     paused = False
                     self.height_pid.set_auto_mode(True, last_output=0)
                     logger.info("[NAVI] Keep Height resumed")
-                out_hei = int(self.height_pid(self.fc.state.alt_add.value))
+                out_hei = round(self.height_pid(self.current_height))
                 self.fc.update_realtime_control(vel_z=out_hei)
+                logger.debug(f"[NAVI] Height PID output: {out_hei}")
             else:
                 if not paused:
                     paused = True
@@ -167,6 +174,7 @@ class Navigation(object):
                     )
             else:
                 logger.warning("[NAVI] RealSense pose timeout")
+                self.fc.update_realtime_control(vel_x=0, vel_y=0, yaw=0)
                 continue
             if self.navigation_flag and self.fc.state.mode.value == self.fc.HOLD_POS_MODE:
                 if paused:
@@ -177,17 +185,17 @@ class Navigation(object):
                     logger.info("[NAVI] Navigation resumed")
                 if available:
                     # self.fc.send_general_position(x=self.current_x, y=self.current_y)
-                    out_x = int(self.navi_x_pid(self.current_x))
+                    out_x = round(self.navi_x_pid(self.current_x))
                     if out_x is not None:
                         self.fc.update_realtime_control(vel_x=out_x)
-                    out_y = int(self.navi_y_pid(self.current_y))
+                    out_y = round(self.navi_y_pid(self.current_y))
                     if out_y is not None:
                         self.fc.update_realtime_control(vel_y=out_y)
-                    out_yaw = int(self.navi_yaw_pid(self.current_yaw))
+                    out_yaw = round(self.navi_yaw_pid(self.current_yaw))
                     if out_yaw is not None:
                         self.fc.update_realtime_control(yaw=out_yaw)
                     if self.debug:  # debug
-                        logger.debug(f"[NAVI] PID output: {out_x}, {out_y}, {out_yaw}")
+                        logger.debug(f"[NAVI] Pose PID output: {out_x}, {out_y}, {out_yaw}")
                 else:
                     logger.warning("[NAVI] Pose from T265 not available")
                     time.sleep(0.1)
@@ -223,6 +231,17 @@ class Navigation(object):
         self.navi_y_pid.setpoint = waypoint[1]
         logger.debug(f"[NAVI] Navigation to waypoint: {waypoint}")
 
+    goto = navigation_to_waypoint  # alias
+
+    def navigation_to_waypoint_relative(self, waypoint_rel):
+        self.navi_x_pid.setpoint += waypoint_rel[0]
+        self.navi_y_pid.setpoint += waypoint_rel[1]
+        logger.debug(
+            f"[NAVI] Navigation to waypoint: {self.navi_x_pid.setpoint}, {self.navi_y_pid.setpoint} (relative from {waypoint_rel})"
+        )
+
+    move = navigation_to_waypoint_relative  # alias
+
     def set_navigation_speed(self, speed):
         speed = abs(speed)
         self.navi_x_pid.output_limits = (-speed, speed)
@@ -231,8 +250,8 @@ class Navigation(object):
 
     def _reached_waypoint(self, pos_thres=15):
         return (
-            abs(self.current_pose[0] - self.navi_x_pid.setpoint) < pos_thres
-            and abs(self.current_pose[1] - self.navi_y_pid.setpoint) < pos_thres
+            abs(self.current_x - self.navi_x_pid.setpoint) < pos_thres
+            and abs(self.current_y - self.navi_y_pid.setpoint) < pos_thres
         )
 
     def pointing_takeoff(self, point):
