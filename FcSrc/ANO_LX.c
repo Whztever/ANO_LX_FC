@@ -56,6 +56,8 @@ _fc_alt_un fc_alt;
 #define MAX_VER_VEL_P 300  //最大打杆时垂直正速度，单位厘米每秒
 #define MAX_VER_VEL_N 200  //最大打杆时垂直负速度，单位厘米每秒
 
+uint8_t remote_ignored = 0;  //遥控器忽略标志位，1为忽略，0为不忽略
+
 //////////////////////////////////////////////////////////////////////
 //以下为飞控基础功能程序，不建议用户改动和调用。
 //////////////////////////////////////////////////////////////////////
@@ -108,49 +110,69 @@ static inline void RC_Data_Task(float dT_s) {
       }
     }
 
-    //摇杆数据转换物理控制量
-    //摇杆数据转换到+-500并加死区
-    float tmp_ch_dz[4];
-    tmp_ch_dz[ch_1_rol] =
-        my_deadzone((rc_in.rc_ch.st_data.ch_[ch_1_rol] - 1500), 0, 40);
-    tmp_ch_dz[ch_2_pit] =
-        my_deadzone((rc_in.rc_ch.st_data.ch_[ch_2_pit] - 1500), 0, 40);
-    tmp_ch_dz[ch_3_thr] =
-        my_deadzone((rc_in.rc_ch.st_data.ch_[ch_3_thr] - 1500), 0, 80);
-    tmp_ch_dz[ch_4_yaw] =
-        my_deadzone((rc_in.rc_ch.st_data.ch_[ch_4_yaw] - 1500), 0, 80);
-    //准备上锁时，ROL,PIT,YAW无效
-    if (sti_fun.pre_locking) {
-      tmp_ch_dz[ch_1_rol] = 0;
-      tmp_ch_dz[ch_2_pit] = 0;
-      tmp_ch_dz[ch_4_yaw] = 0;
+    // 第八通道 - 屏蔽遥控
+    if (rc_in.rc_ch.st_data.ch_[ch_8_aux4] > 1700 &&
+        rc_in.rc_ch.st_data.ch_[ch_8_aux4] < 2200) {
+      if (remote_ignored == 0) {
+        remote_ignored = 1;
+        rt_tar.st_data.vel_x = 0;
+        rt_tar.st_data.vel_y = 0;
+        rt_tar.st_data.vel_z = 0;
+        rt_tar.st_data.yaw_dps = 0;
+      }
+      rt_tar.st_data.rol = 0;
+      rt_tar.st_data.pit = 0;
+      rt_tar.st_data.thr = 500;  // 油门归中
+      for (u8 i = 0; i < 4; i++) {
+        rc_in.rc_ch.st_data.ch_[i] = 1500;  // 模拟通道值
+      }
+    } else {
+      remote_ignored = 0;
+      // 摇杆数据转换物理控制量
+      // 摇杆数据转换到+-500并加死区
+      float tmp_ch_dz[4];
+      tmp_ch_dz[ch_1_rol] =
+          my_deadzone((rc_in.rc_ch.st_data.ch_[ch_1_rol] - 1500), 0, 40);
+      tmp_ch_dz[ch_2_pit] =
+          my_deadzone((rc_in.rc_ch.st_data.ch_[ch_2_pit] - 1500), 0, 40);
+      tmp_ch_dz[ch_3_thr] =
+          my_deadzone((rc_in.rc_ch.st_data.ch_[ch_3_thr] - 1500), 0, 80);
+      tmp_ch_dz[ch_4_yaw] =
+          my_deadzone((rc_in.rc_ch.st_data.ch_[ch_4_yaw] - 1500), 0, 80);
+      // 准备上锁时，ROL,PIT,YAW无效
+      if (sti_fun.pre_locking) {
+        tmp_ch_dz[ch_1_rol] = 0;
+        tmp_ch_dz[ch_2_pit] = 0;
+        tmp_ch_dz[ch_4_yaw] = 0;
+      }
+
+      // 摇杆转换姿态量、油门量
+      // 注意0.00217f和0.00238f是为了对应的补偿死区减小的部分，原本为0.002f，±500转换到±1。
+      // 注意正负号需要满足ANO坐标系定义，一般情况姿态角表示方向（包括上位机）和遥控摇杆反向都与飞控使用的ANO坐标系不同。
+      //		if(mod_f[0]<2)
+      //		{
+      rt_tar.st_data.rol = tmp_ch_dz[ch_1_rol] * 0.00217f * MAX_ANGLE;
+      rt_tar.st_data.pit =
+          -tmp_ch_dz[ch_2_pit] * 0.00217f *
+          MAX_ANGLE;  // 因为摇杆俯仰方向和定义的俯仰方向相反，所以取负
+      rt_tar.st_data.thr = (rc_in.rc_ch.st_data.ch_[ch_3_thr] - 1000);  // 0.1%
+      rt_tar.st_data.yaw_dps =
+          -tmp_ch_dz[ch_4_yaw] * 0.00238f *
+          MAX_YAW_DPS;  // 因为摇杆航向方向和定义的航向方向相反，所以取负
+                        //		}
     }
-    //摇杆转换姿态量、油门量
-    //注意0.00217f和0.00238f是为了对应的补偿死区减小的部分，原本为0.002f，±500转换到±1。
-    //注意正负号需要满足ANO坐标系定义，一般情况姿态角表示方向（包括上位机）和遥控摇杆反向都与飞控使用的ANO坐标系不同。
-    //		if(mod_f[0]<2)
-    //		{
-    rt_tar.st_data.rol = tmp_ch_dz[ch_1_rol] * 0.00217f * MAX_ANGLE;
-    rt_tar.st_data.pit =
-        -tmp_ch_dz[ch_2_pit] * 0.00217f *
-        MAX_ANGLE;  //因为摇杆俯仰方向和定义的俯仰方向相反，所以取负
-    rt_tar.st_data.thr = (rc_in.rc_ch.st_data.ch_[ch_3_thr] - 1000);  // 0.1%
-    rt_tar.st_data.yaw_dps =
-        -tmp_ch_dz[ch_4_yaw] * 0.00238f *
-        MAX_YAW_DPS;  //因为摇杆航向方向和定义的航向方向相反，所以取负
-                      //		}
-    //############(实时控制帧，自主开发闭环控制，在这里赋值即可)##############
-    //实时XYZ-YAW期望速度(实时控制帧)
+    // ############(实时控制帧，自主开发闭环控制，在这里赋值即可)##############
+    // 实时XYZ-YAW期望速度(实时控制帧)
     //		rt_tar.st_data.yaw_dps = 0; //航向转动角速度，度每秒，逆时针为正
     //		rt_tar.st_data.vel_x = 0;    //头向速度，厘米每秒
     //		rt_tar.st_data.vel_y = 0;    //左向速度，厘米每秒
     //		rt_tar.st_data.vel_z = 0;	 //天向速度，厘米每秒
-    //########################################################################
+    // ########################################################################
     //=====
-    dt.fun[0x41].WTS = 1;  //将要发送rt_tar数据。
-    //失控保护标记复位
-    // fail_safe_change_mod = 0;
-    // fail_safe_return_home = 0;
+    dt.fun[0x41].WTS = 1;  // 将要发送rt_tar数据。
+    // 失控保护标记复位
+    //  fail_safe_change_mod = 0;
+    //  fail_safe_return_home = 0;
   } else  //无遥控信号
   {
     // //解锁后，丢失信号失控需要触发返航（不可返航时会自动触发降落）
