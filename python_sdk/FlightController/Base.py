@@ -5,9 +5,8 @@ import time
 import traceback
 from typing import List, Optional
 
-from loguru import logger
-
 from FlightController.Serial import FC_Serial
+from loguru import logger
 
 
 def bytes_to_str(data):
@@ -20,13 +19,7 @@ class Byte_Var:
     使用时直接操作成员bytes和value即可
     """
 
-    _value = 0
-    _last_update_time: float = 0
-    _byte_length = 0
-    _multiplier = 1
-    _signed = False
-    _var_type = None
-    name = None
+    name = ""
 
     def __set_name__(self, owner, name):
         self.name = name
@@ -37,6 +30,11 @@ class Byte_Var:
         py_var_type (_type_): python类型(如int, float)
         value_multiplier (int, optional): 值在从byte向python转换时的乘数. Defaults to 1.
         """
+        self._value = 0
+        self._byte_length = 0
+        self._multiplier = 1
+        self._signed = False
+        self._var_type = None
         self.reset(0, ctype, var_type, value_multiplier)
 
     def reset(self, init_value, ctype: str, py_var_type, value_multiplier=1):
@@ -64,7 +62,6 @@ class Byte_Var:
         self._var_type = py_var_type
         self._multiplier = value_multiplier
         self._value = self._var_type(init_value)
-        self._last_update_time = time.perf_counter()
         return self
 
     @property
@@ -74,11 +71,9 @@ class Byte_Var:
     @value.setter
     def value(self, value):
         self._value = self._var_type(value)
-        self._last_update_time = time.perf_counter()
 
     def update_value_with_mul(self, value):
         self._value = self._var_type(value * self._multiplier)
-        self._last_update_time = time.perf_counter()
 
     @property
     def bytes(self):
@@ -90,7 +85,6 @@ class Byte_Var:
     @bytes.setter
     def bytes(self, value):
         self._value = self._var_type(int.from_bytes(value, "little", signed=self._signed) * self._multiplier)
-        self._last_update_time = time.perf_counter()
 
     @property
     def byte_length(self):
@@ -99,14 +93,6 @@ class Byte_Var:
     @byte_length.setter
     def byte_length(self, value):
         raise Exception("byte_length is read-only")
-
-    @property
-    def last_update_time(self):
-        return self._last_update_time
-
-    @last_update_time.setter
-    def last_update_time(self, value):
-        raise Exception("last_update_time is read-only")
 
     @property
     def struct_fmt_type(self):
@@ -146,6 +132,7 @@ class FC_State_Struct:
     def __init__(self):
         self._fmt_string = "<" + "".join([i.struct_fmt_type for i in self.RECV_ORDER])
         self._fmt_length = struct.calcsize(self._fmt_string)
+        self.update_event = threading.Event()
 
     def update_from_bytes(self, bytes):
         if len(bytes) != self._fmt_length:
@@ -153,6 +140,7 @@ class FC_State_Struct:
         vals = struct.unpack(self._fmt_string, bytes)
         for i, val in enumerate(vals):
             self.RECV_ORDER[i].update_value_with_mul(val)
+        self.update_event.set()
 
     @property
     def command_now(self):

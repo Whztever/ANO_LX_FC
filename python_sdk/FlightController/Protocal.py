@@ -278,8 +278,8 @@ class FC_Protocol(FC_Base_Uart_Comunication):
             alt = self.state.alt_fused
         elif source == 1:
             alt = self.state.alt_add
-        while time.perf_counter() - alt.last_update_time > 0.5:
-            time.sleep(0.1)  # 确保使用的是最新的高度
+        self.state.update_event.clear()  # 确保使用的是最新的高度
+        self.state.update_event.wait()
         if height < alt.value:
             self.go_down(alt.value - height, speed)
         elif height > alt.value:
