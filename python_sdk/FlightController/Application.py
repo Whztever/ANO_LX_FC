@@ -106,7 +106,7 @@ class FC_Application(FC_Protocol):
             if timeout_s > 0 and time.perf_counter() - t0 > timeout_s:
                 logger.warning("[FC] wait for takeoff done timeout")
                 return False
-        if self.state.alt_add.value < 20:
+        if self.state.alt_add.value < 10:
             logger.warning("[FC] takeoff failed, low altitude")
             return False
         time.sleep(1)  # 等待机身高度稳定

@@ -62,7 +62,6 @@ class Navigation(object):
         """
         重置基地点到当前雷达位置
         """
-        time.sleep(1)  # 等待雷达数据稳定
         if not self.radar.rt_pose_update_event.wait(3):
             logger.error("[NAVI] reset_basepoint(): Radar pose update timeout")
             raise RuntimeError("Radar pose update timeout")
@@ -111,7 +110,7 @@ class Navigation(object):
         """
         ######## 解算参数 ########
         SIZE = 1000
-        SCALE_RATIO = 0.5
+        SCALE_RATIO = 0.9
         LOW_PASS_RATIO = 0.6
         RADAR_SKIP = 20  # 400/RADAR_SKIP
         RS_SKIP = 5  # 200/RS_SKIP
@@ -133,9 +132,9 @@ class Navigation(object):
         self.fc.update_realtime_control(vel_x=0, vel_y=0, vel_z=0, yaw=0)
         self.fc.start_realtime_control(40)
         logger.info("[NAVI] Realtime control started")
-        self._thread_list.append(threading.Thread(target=self.keep_height_task, daemon=True))
+        self._thread_list.append(threading.Thread(target=self._keep_height_task, daemon=True))
         self._thread_list[-1].start()
-        self._thread_list.append(threading.Thread(target=self.navigation_task, daemon=True))
+        self._thread_list.append(threading.Thread(target=self._navigation_task, daemon=True))
         self._thread_list[-1].start()
         logger.info("[NAVI] Navigation started")
 
@@ -181,7 +180,8 @@ class Navigation(object):
                 logger.info("[NAVI] Keep Height resumed")
             out_hei = round(self.height_pid(self.current_height))
             self.fc.update_realtime_control(vel_z=out_hei)
-            logger.debug(f"[NAVI] Height PID output: {out_hei}")
+            if self.debug:
+                logger.debug(f"[NAVI] Height PID output: {out_hei}")
 
     def _navigation_task(self):
         paused = False
@@ -193,13 +193,13 @@ class Navigation(object):
                 continue
             self.rs.update_event.clear()
             if not self.rs.secondary_frame_established:
-                self.current_x = self.basepoint[0] - self.rs.pose.translation.z * 100
-                self.current_y = self.basepoint[1] - self.rs.pose.translation.x * 100
+                self.current_x = -self.rs.pose.translation.z * 100
+                self.current_y = -self.rs.pose.translation.x * 100
                 self.current_yaw = -self.rs.eular_rotation[2]
             else:
                 position, eular = self.rs.get_pose_in_secondary_frame(as_eular=True)
-                self.current_x = self.basepoint[0] - position[2] * 100
-                self.current_y = self.basepoint[1] - position[0] * 100
+                self.current_x = -position[2] * 100
+                self.current_y = -position[0] * 100
                 self.current_yaw = -eular[2]
             available = self.rs.pose.tracker_confidence >= 2
             if self.debug:  # debug
@@ -249,20 +249,19 @@ class Navigation(object):
         """
         根据雷达数据校准T265的副坐标系
         """
-        time.sleep(1)  # 等待雷达数据稳定
         if not self.radar.rt_pose_update_event.wait(3):
             logger.error("[NAVI] calibrate_realsense(): Radar pose update timeout")
             raise RuntimeError("Radar pose update timeout")
         x, y, yaw = self.radar.rt_pose
-        z = self.fc.state.alt_add.value
         dx = x - self.basepoint[0]  # -> t265 -z * 100
         dx = -dx / 100.0
         dy = y - self.basepoint[1]  # -> t265 -x * 100
         dy = -dy / 100.0
-        dz = z / 100.0
+        # z = self.fc.state.alt_add.value
+        # dz = z / 100.0
         dyaw = -yaw
-        logger.debug(f"[NAVI] Calibrate T265: dz={dx}, dx={dy}, dy={dz}, dyaw={dyaw}")
-        self.rs.establish_secondary_origin(force_level=True, z_offset=dx, x_offset=dy, y_offset=dz, yaw_offset=dyaw)
+        logger.debug(f"[NAVI] Calibrate T265: dz={dx}, dx={dy}, dyaw={dyaw}")
+        self.rs.establish_secondary_origin(force_level=True, z_offset=dx, x_offset=dy, yaw_offset=dyaw)  # , y_offset=dz
 
     def navigation_to_waypoint(self, waypoint):
         """
@@ -359,7 +358,7 @@ class Navigation(object):
         self.yaw_pid.output_limits = (-speed, speed)
         logger.info(f"[NAVI] Yaw speed set to {speed}")
 
-    def _reached_waypoint(self, pos_thres=15):
+    def _reached_waypoint(self, pos_thres=30):
         return (
             abs(self.current_x - self.navi_x_pid.setpoint) < pos_thres
             and abs(self.current_y - self.navi_y_pid.setpoint) < pos_thres
@@ -380,7 +379,7 @@ class Navigation(object):
         inital_yaw = self.fc.state.yaw.value
         time.sleep(2)  # 等待电机启动
         self.fc.take_off(80)
-        self.fc.wait_for_takeoff_done()
+        self.fc.wait_for_takeoff_done(timeout_s=8)
         self.fc.set_yaw(inital_yaw, 25)
         self.fc.wait_for_hovering(2)
         ######## 闭环定高
@@ -392,7 +391,6 @@ class Navigation(object):
         self.switch_pid("default")
         time.sleep(0.1)
         self.navigation_flag = True
-        self.set_navigation_speed(self.navigation_speed)
 
     def pointing_landing(self, point):
         """
@@ -405,7 +403,6 @@ class Navigation(object):
         self.keep_height_flag = True
         self.navigation_to_waypoint(point)
         self.wait_for_waypoint()
-        self.set_navigation_speed(self.precision_speed)
         self.switch_pid("landing")
         time.sleep(0.5)
         self.set_height(60)
@@ -422,7 +419,7 @@ class Navigation(object):
         self.navigation_flag = False
         self.keep_height_flag = False
 
-    def wait_for_waypoint(self, time_thres=0.5, pos_thres=15, timeout=30):
+    def wait_for_waypoint(self, time_thres=1, pos_thres=20, timeout=15):
         """
         等待到达目标点
 
@@ -443,7 +440,7 @@ class Navigation(object):
                 logger.warning("[NAVI] Waypoint overtime")
                 return
 
-    def wait_for_height(self, time_thres=0.5, height_thres=8, timeout=30):
+    def wait_for_height(self, time_thres=0.5, height_thres=8, timeout=10):
         """
         等待到达目标高度(定高设定值)
 
@@ -464,7 +461,7 @@ class Navigation(object):
                 logger.warning("[NAVI] Height overtime")
                 return
 
-    def wait_for_yaw(self, time_thres=0.5, yaw_thres=5, timeout=30):
+    def wait_for_yaw(self, time_thres=0.5, yaw_thres=5, timeout=10):
         """
         等待到达目标偏航角
 

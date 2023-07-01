@@ -5,9 +5,8 @@ from multiprocessing.managers import BaseManager, EventProxy, ListProxy  # type:
 from threading import Event, Thread
 from typing import Optional
 
-from loguru import logger
-
 from FlightController.Application import FC_Application
+from loguru import logger
 
 
 def get_ip():
@@ -175,6 +174,14 @@ class FC_Client(FC_Application):
         self._listen_thread.start()
         logger.info("[FC_Client] State sync started")
 
+    def stop_sync_state(self):
+        """
+        停止与服务器同步状态变量
+        """
+        self.running = False
+        self._listen_thread.join()
+        logger.info("[FC_Client] State sync stopped")
+
     def _sync_state_task(self):
         _len = len(self.state.RECV_ORDER)
         last_id = 0
@@ -195,6 +202,7 @@ class FC_Client(FC_Application):
                             self.event.EVENT_CODE[event_code].set()
                         elif event_operator == 0x02:  # clear
                             self.event.EVENT_CODE[event_code].clear()
+                self.state.update_event.set()
                 self._proxy_state_event.clear()
                 if callable(self._state_update_callback):
                     self._state_update_callback(self.state)

@@ -53,7 +53,7 @@ class FC_Serial:
         Returns:
             None
         """
-        self._read_start_bit = startBit
+        self._read_start_bit = bytes(startBit)
 
     def check_rx_data_checksum(self):
         """
@@ -99,17 +99,18 @@ class FC_Serial:
                     self._pack_count = 0
                     self._pack_length = -1
                     self._in_waiting_buffer = bytes()
-            elif self._pack_length == -1:
-                self._pack_length_bit = int.from_bytes(read_byte, self._byte_order, signed=False)
-                self._pack_length = self._pack_length_bit & 0xFF
             else:
+                if self._pack_length == -1:
+                    self._pack_length_bit = int.from_bytes(read_byte, self._byte_order, signed=False)
+                    self._pack_length = self._pack_length_bit & 0xFF
+                    continue
                 self._pack_count += 1
                 self._read_buffer += read_byte
                 if self._pack_count >= self._pack_length:
                     self._reading_flag = False
                     checksum = sum(self._read_buffer[:-1]) & 0xFF
                     checksum += self._pack_length_bit & 0xFF
-                    if checksum & 0xFF == self._read_buffer[-1]:
+                    if self.check_rx_data_checksum():
                         self.data = self._read_buffer
                         self._read_buffer = bytes()
                         return True
