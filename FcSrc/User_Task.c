@@ -55,11 +55,12 @@ void UserTask_OneKeyCmd(void) {
     if (emergency_stop_f == 0) {
       emergency_stop_f = 1;
       //执行一键锁桨
-      FC_Lock();
+      emergencyPWMSet();
       pwm_to_esc.pwm_m1 = 0;
       pwm_to_esc.pwm_m2 = 0;
       pwm_to_esc.pwm_m3 = 0;
       pwm_to_esc.pwm_m4 = 0;
+      FC_Lock();
     }
   } else {
     emergency_stop_f = 0;

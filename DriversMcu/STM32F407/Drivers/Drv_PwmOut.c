@@ -249,4 +249,11 @@ void DrvMotorPWMSet(int16_t pwm[8]) {
   TIM8->CCR3 = (pwm[7]);  // 8
 }
 
+void emergencyPWMSet(void){
+  TIM1->CCR1 = INIT_DUTY;  // 4
+  TIM1->CCR2 = INIT_DUTY;  // 3
+  TIM1->CCR3 = INIT_DUTY;  // 2
+  TIM1->CCR4 = INIT_DUTY;  // 1
+}
+
 /******************* (C) COPYRIGHT 2014 ANO TECH *****END OF FILE************/

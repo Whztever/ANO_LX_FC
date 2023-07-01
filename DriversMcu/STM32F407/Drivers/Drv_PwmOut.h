@@ -13,5 +13,5 @@
 
 void DrvPwmOutInit(void);
 void DrvMotorPWMSet(int16_t pwm[]);  //范围0-1000
-
+void emergencyPWMSet(void);
 #endif

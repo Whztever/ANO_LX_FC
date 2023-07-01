@@ -6,9 +6,13 @@
  **********************************************************************************/
 #include "Ano_Scheduler.h"
 #include "SysConfig.h"
-
+#include "Drv_PwmOut.h"
 #ifdef USE_FULL_ASSERT
 void assert_failed(uint8_t *file, uint32_t line) {
+  TIM1->CCR1 = 0;  // 4
+  TIM1->CCR2 = 0;  // 3
+  TIM1->CCR3 = 0;  // 2
+  TIM1->CCR4 = 0;  // 1
   while (1) {
     //当系统出错后，会进入这个死循环
   }

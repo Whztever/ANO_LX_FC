@@ -265,6 +265,14 @@ static inline void ESC_Output(u8 unlocked) {
 //根据ADC计算电池电压
 static void Bat_Voltage_Data_Handle() {
   fc_bat.st_data.voltage_100 = Drv_AdcGetBatVot() * 100;  //单位：10mv
+  if (fc_bat.st_data.voltage_100 < 300 * 3) {
+    emergencyPWMSet();
+    pwm_to_esc.pwm_m1 = 0;
+    pwm_to_esc.pwm_m2 = 0;
+    pwm_to_esc.pwm_m3 = 0;
+    pwm_to_esc.pwm_m4 = 0;
+    FC_Lock();
+  }
 }
 
 //定时1ms调用
@@ -299,7 +307,7 @@ void ANO_LX_Task() {
   //通信交换
   ANO_LX_Data_Exchange_Task(0.001f);
   //电调输出
-  ESC_Output(1);  // unlocked
+  ESC_Output(fc_sta.unlock_sta != 0);  // unlocked
   //灯光驱动
   LED_1ms_DRV();
   //按键驱动
