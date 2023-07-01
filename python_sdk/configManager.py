@@ -28,6 +28,13 @@ class ConfigManager:
         self._section_name = section.upper()
         self._init_file(default_setting.copy())
 
+    def save(self):
+        """
+        Save the config file
+        """
+        with open(self._config_file, "w") as f:
+            self._config.write(f)
+
     def set(self, option: str, value: Any):
         """
         Set the value of an option
@@ -37,16 +44,14 @@ class ConfigManager:
         if not isinstance(value, str):
             value = repr(value)
         self._config.set(self._section_name, option, value)
-        with open(self._config_file, "w") as f:
-            self._config.write(f)
+        self.save()
 
     def remove(self, option: str):
         """
         Remove an option
         """
         self._config.remove_option(self._section_name, option)
-        with open(self._config_file, "w") as f:
-            self._config.write(f)
+        self.save()
 
     def _init_file(self, default_setting: dict):
         if self._section_name not in self._config.sections():
@@ -54,14 +59,16 @@ class ConfigManager:
 
         for key, value in default_setting.items():
             if not self._config.has_option(self._section_name, key):
-                self.set(key, value)
+                self._config.set(self._section_name, key, str(value))
+        self.save()
 
     def set_from_dict(self, setting_dict: dict):
         """
         Set values by a given dictionary
         """
         for key, value in setting_dict.items():
-            self.set(key, value)
+            self._config.set(self._section_name, key, str(value))
+        self.save()
 
     def dict(self) -> dict[str, str]:
         """
@@ -135,7 +142,7 @@ class ConfigManager:
             return default
 
     def get_array(
-        self, option: str, dtype: Optional[str] = None, default: Optional[Any] = None
+        self, option: str, default: Optional[Any] = None, dtype: Optional[str] = None
     ) -> Optional[np.ndarray]:
         """
         Get the value of an option, return as numpy array
