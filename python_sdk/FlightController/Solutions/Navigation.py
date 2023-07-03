@@ -9,6 +9,11 @@ from FlightController.Components.RealSense import T265
 from loguru import logger
 from simple_pid import PID
 
+logger.add(
+    "fc_log/navigation_debug_{time}.log", retention=3, filter=lambda record: "debug" in record["extra"], level="DEBUG"
+)
+logger_dbg = logger.bind(debug=True)
+
 
 class Navigation(object):
     """
@@ -55,14 +60,13 @@ class Navigation(object):
         self.keep_height_flag = False  # 定高状态
         self.navigation_flag = False  # 导航状态
         self.running = False
-        self.debug = False  # 调试模式
         self._thread_list: List[threading.Thread] = []
 
-    def reset_basepoint(self) -> np.ndarray:
+    def reset_basepoint(self, wait=True) -> np.ndarray:
         """
         重置基地点到当前雷达位置
         """
-        if not self.radar.rt_pose_update_event.wait(3):
+        if wait and not self.radar.rt_pose_update_event.wait(1):
             logger.error("[NAVI] reset_basepoint(): Radar pose update timeout")
             raise RuntimeError("Radar pose update timeout")
         x, y, _ = self.radar.rt_pose
@@ -104,16 +108,18 @@ class Navigation(object):
                 thread.join()
         logger.info("[NAVI] Navigation stopped")
 
-    def start(self):
+    def start(self, mode="radar"):
         """
         启动导航
+        mode: 导航模式, "radar"/"rs"/"fusion"
         """
         ######## 解算参数 ########
         SIZE = 1000
         SCALE_RATIO = 0.9
         LOW_PASS_RATIO = 0.6
-        RADAR_SKIP = 20  # 400/RADAR_SKIP
+        RADAR_SKIP = 40  # 400/RADAR_SKIP
         RS_SKIP = 5  # 200/RS_SKIP
+        POLYLINE = True
         ########################
         if self.running:
             logger.warning("[NAVI] Navigation already running, restarting...")
@@ -123,20 +129,22 @@ class Navigation(object):
         self.running = True
         self.radar.subtask_skip = RADAR_SKIP
         self.rs.event_skip = RS_SKIP
-        self.radar.start_resolve_pose(
-            size=SIZE,
-            scale_ratio=SCALE_RATIO,
-            low_pass_ratio=LOW_PASS_RATIO,
-        )
+        self.radar.start_resolve_pose(size=SIZE, scale_ratio=SCALE_RATIO, low_pass_ratio=LOW_PASS_RATIO, polyline=POLYLINE)
         logger.info("[NAVI] Resolve pose started")
         self.fc.update_realtime_control(vel_x=0, vel_y=0, vel_z=0, yaw=0)
         self.fc.start_realtime_control(40)
         logger.info("[NAVI] Realtime control started")
+        self._navigation_mode = mode
         self._thread_list.append(threading.Thread(target=self._keep_height_task, daemon=True))
         self._thread_list[-1].start()
         self._thread_list.append(threading.Thread(target=self._navigation_task, daemon=True))
         self._thread_list[-1].start()
         logger.info("[NAVI] Navigation started")
+
+    def switch_navigation_mode(self, mode: str):
+        assert mode in ("radar", "rs", "fusion"), "Invalid navigation mode"
+        self._navigation_mode = mode
+        logger.info(f"[NAVI] Navigation mode switched to {mode}")
 
     def switch_pid(self, pid: Union[str, tuple]):
         """
@@ -161,8 +169,7 @@ class Navigation(object):
                 continue
             self.fc.state.update_event.clear()
             self.current_height = self.fc.state.alt_add.value
-            if self.debug:
-                logger.debug(f"[NAVI] Current height: {self.current_height}")
+            logger_dbg.debug(f"[NAVI] Current height: {self.current_height}")
             if not (
                 self.keep_height_flag
                 and self.fc.state.mode.value == self.fc.HOLD_POS_MODE
@@ -180,35 +187,58 @@ class Navigation(object):
                 logger.info("[NAVI] Keep Height resumed")
             out_hei = round(self.height_pid(self.current_height))
             self.fc.update_realtime_control(vel_z=out_hei)
-            if self.debug:
-                logger.debug(f"[NAVI] Height PID output: {out_hei}")
+            logger_dbg.info(f"[NAVI] Height PID output: {out_hei}")
+
+    def _get_t265_pose(self, wait=True) -> Optional[Tuple[float, float, float, bool]]:
+        if wait and not self.rs.update_event.wait(1):
+            logger.warning("[NAVI] RealSense pose timeout")
+            return None
+        self.rs.update_event.clear()
+        if not self.rs.secondary_frame_established:
+            current_x = -self.rs.pose.translation.z * 100
+            current_y = -self.rs.pose.translation.x * 100
+            current_yaw = -self.rs.eular_rotation[2]
+        else:
+            position, eular = self.rs.get_pose_in_secondary_frame(as_eular=True)
+            current_x = -position[2] * 100
+            current_y = -position[0] * 100
+            current_yaw = -eular[2]
+        available = self.rs.pose.tracker_confidence >= 2
+        logger_dbg.debug(f"[NAVI] RealSense pose: {current_x}, {current_y}, {current_yaw}, {available}")
+        return current_x, current_y, current_yaw, available
+
+    def _get_radar_pose(self, wait=True) -> Optional[Tuple[float, float, float, bool]]:
+        if wait and not self.radar.rt_pose_update_event.wait(1):
+            logger.warning("[NAVI] Radar pose timeout")
+            return None
+        self.radar.rt_pose_update_event.clear()
+        current_x, current_y, current_yaw = self.radar.rt_pose
+        current_x -= self.basepoint[0]
+        current_y -= self.basepoint[1]
+        logger_dbg.debug(f"[NAVI] Radar pose: {current_x}, {current_y}, {current_yaw}")
+        return current_x, current_y, current_yaw, current_x + current_y != 0
+
+    def _get_fusion_pose(self) -> Optional[Tuple[float, float, float, bool]]:
+        if self.radar.rt_pose_update_event.is_set():
+            self.calibrate_realsense(wait=False)
+            self.radar.rt_pose_update_event.clear()
+        return self._get_t265_pose()
 
     def _navigation_task(self):
         paused = False
         while self.running:
             time.sleep(0.001)
-            if not self.rs.update_event.wait(1):  # 等待地图更新
-                logger.warning("[NAVI] RealSense pose timeout")
+            if self._navigation_mode == "radar":
+                pose = self._get_radar_pose()
+            elif self._navigation_mode == "rs":
+                pose = self._get_t265_pose()
+            else:
+                pose = self._get_fusion_pose()
+            if pose is None:
                 self.fc.update_realtime_control(vel_x=0, vel_y=0, yaw=0)
                 continue
-            self.rs.update_event.clear()
-            if not self.rs.secondary_frame_established:
-                self.current_x = -self.rs.pose.translation.z * 100
-                self.current_y = -self.rs.pose.translation.x * 100
-                self.current_yaw = -self.rs.eular_rotation[2]
-            else:
-                position, eular = self.rs.get_pose_in_secondary_frame(as_eular=True)
-                self.current_x = -position[2] * 100
-                self.current_y = -position[0] * 100
-                self.current_yaw = -eular[2]
-            available = self.rs.pose.tracker_confidence >= 2
-            if self.debug:  # debug
-                logger.debug(
-                    (
-                        f"[NAVI] T265 pose: {self.current_x}, {self.current_y}, {self.current_yaw}; "
-                        f"Radar pose: {self.radar.rt_pose[0]}, {self.radar.rt_pose[1]}, {self.radar.rt_pose[2]}"
-                    )
-                )
+            self.current_x, self.current_y, self.current_yaw, available = pose
+            logger_dbg.debug(f"[NAVI] Pose: {self.current_x}, {self.current_y}, {self.current_yaw}")
             if not (
                 self.navigation_flag
                 and self.fc.state.mode.value == self.fc.HOLD_POS_MODE
@@ -229,7 +259,7 @@ class Navigation(object):
                 self.yaw_pid.set_auto_mode(True, last_output=0)
                 logger.info("[NAVI] Navigation resumed")
             if not available:
-                logger.warning("[NAVI] Pose from T265 not available")
+                logger.warning("[NAVI] Pose not available")
                 time.sleep(0.1)
                 continue
             # self.fc.send_general_position(x=self.current_x, y=self.current_y)
@@ -242,14 +272,13 @@ class Navigation(object):
             out_yaw = round(self.yaw_pid(self.current_yaw))
             if out_yaw is not None:
                 self.fc.update_realtime_control(yaw=out_yaw)
-            if self.debug:  # debug
-                logger.debug(f"[NAVI] Pose PID output: {out_x}, {out_y}, {out_yaw}")
+            logger_dbg.info(f"[NAVI] Pose PID output: {out_x}, {out_y}, {out_yaw}")
 
-    def calibrate_realsense(self):
+    def calibrate_realsense(self, wait=True):
         """
         根据雷达数据校准T265的副坐标系
         """
-        if not self.radar.rt_pose_update_event.wait(3):
+        if wait and not self.radar.rt_pose_update_event.wait(1):
             logger.error("[NAVI] calibrate_realsense(): Radar pose update timeout")
             raise RuntimeError("Radar pose update timeout")
         x, y, yaw = self.radar.rt_pose
@@ -257,11 +286,9 @@ class Navigation(object):
         dx = -dx / 100.0
         dy = y - self.basepoint[1]  # -> t265 -x * 100
         dy = -dy / 100.0
-        # z = self.fc.state.alt_add.value
-        # dz = z / 100.0
         dyaw = -yaw
-        logger.debug(f"[NAVI] Calibrate T265: dz={dx}, dx={dy}, dyaw={dyaw}")
-        self.rs.establish_secondary_origin(force_level=True, z_offset=dx, x_offset=dy, yaw_offset=dyaw)  # , y_offset=dz
+        logger_dbg.info(f"[NAVI] Calibrate T265: radar={self.radar.rt_pose} dz={dx}, dx={dy}, dyaw={dyaw}")
+        self.rs.establish_secondary_origin(force_level=True, z_offset=dx, x_offset=dy, yaw_offset=dyaw)
 
     def navigation_to_waypoint(self, waypoint):
         """

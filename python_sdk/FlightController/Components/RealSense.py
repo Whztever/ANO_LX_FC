@@ -334,7 +334,7 @@ class T265(object):
         self._secondary_rotation_matrix = self._secondary_rotation.as_matrix()
         self._offset_position = np.array([x_offset, y_offset, z_offset])
         self._offset_yaw = yaw_offset
-        logger.debug(f"[T265] Secondary origin established: {self._secondary_position}, {self._secondary_orientation}")
+        # logger.debug(f"[T265] Secondary origin established: {self._secondary_position}, {self._secondary_orientation}")
         self.secondary_frame_established = True
 
     def get_pose_in_secondary_frame(self, as_eular=True) -> Tuple[np.ndarray, np.ndarray]:
